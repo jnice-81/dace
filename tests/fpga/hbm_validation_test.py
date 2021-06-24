@@ -70,7 +70,7 @@ def unsound_location_test():
     assert_validation_failure(sdfg, InvalidSDFGError)
     sdfg.arrays["a"].location["bank"] = "hbm.k:5"
     assert_validation_failure(sdfg, InvalidSDFGError)
-    sdfg.add_constant("k", 6)
+    sdfg.add_constant("k", 1)
     sdfg.arrays["a"].location["bank"] = "hbm.k:5"
     sdfg.validate()
     sdfg.constants_prop.clear()
@@ -86,9 +86,9 @@ def unsound_location_test():
     sdfg.arrays["b"].location["bank"] = "ddr.1"
     sdfg.validate()
     sdfg.arrays["b"].location["bank"] = "wut.32"
-    assert_validation_failure()
+    assert_validation_failure(sdfg, InvalidSDFGError)
     sdfg.arrays["b"].location["bank"] = "ddr8"
-    assert_validation_failure()
+    assert_validation_failure(sdfg, InvalidSDFGError)
 
 if __name__ == "__main__":
     deepscope_test()
