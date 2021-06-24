@@ -1034,8 +1034,7 @@ def is_hbm_array(array: dt.Data):
     """
     :return: True if this array is placed on HBM
     """
-    if (isinstance(array, dt.Array)
-        and array.storage == dtypes.StorageType.FPGA_Global):
+    if isinstance(array, dt.Array):
         res = parse_location_bank(array)
         return res is not None and res[0] == "HBM"
     else:
@@ -1125,7 +1124,7 @@ def get_multibank_ranges_from_subset(
     return (low, high + 1)
 
 def parse_location_bank(array : dt.Array) -> Tuple[str, str]:
-    if "bank" in array.location:
+    if array.storage == dtypes.StorageType.FPGA_Global and "bank" in array.location:
         val : str = array.location["bank"]
         split = val.split(".")
         if(len(split) != 2):
