@@ -26,7 +26,6 @@ def test_ignore_one_output():
     sdfg.expand_library_nodes()
     sdfg.apply_fpga_transformations()
     assert_copy_to_device(sdfg, "out", False)
-    sdfg.compile()
                         
 def test_copy_wcr_output():
     N = dace.symbol("N")
@@ -54,5 +53,5 @@ def test_copy_input_output():
 
 if __name__ == "__main__":
     test_ignore_one_output()
-    #test_copy_wcr_output()
-    #test_copy_input_output()
+    test_copy_wcr_output()
+    test_copy_input_output()
