@@ -2181,6 +2181,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                    states=states)
 
     def apply_fpga_transformations(self,
+                                   init_outputs_from_host=True,
                                    states=None,
                                    validate=True,
                                    validate_all=False,
@@ -2197,7 +2198,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                    validate=validate,
                                    validate_all=validate_all,
                                    strict=strict,
-                                   states=states)
+                                   states=states,
+                                   options={"add_outputs_as_inputs" : 
+                                   init_outputs_from_host})
 
     def expand_library_nodes(self, recursive=True):
         """

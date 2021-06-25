@@ -1230,7 +1230,7 @@ class NestSDFG(transformation.Transformation):
                 nested_sdfg.arrays[arrname_nested] = desc
                 inputs[arrname] = arrname_nested
 
-        #Since we might add more arrays, we have to delete those as well
+        # Since we might add more arrays we need to delete again
         for name in inputs:
             if name in nested_sdfg.arrays:
                 del nested_sdfg.arrays[name]

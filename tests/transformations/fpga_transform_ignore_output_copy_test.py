@@ -24,7 +24,7 @@ def test_ignore_one_output():
 
     sdfg = saddtest.to_sdfg()
     sdfg.expand_library_nodes()
-    sdfg.apply_fpga_transformations()
+    sdfg.apply_fpga_transformations(False)
     assert_copy_to_device(sdfg, "out", False)
                         
 def test_copy_wcr_output():
@@ -36,7 +36,7 @@ def test_copy_wcr_output():
 
     sdfg = sdottest.to_sdfg()
     sdfg.expand_library_nodes()
-    sdfg.apply_fpga_transformations()
+    sdfg.apply_fpga_transformations(False)
     assert_copy_to_device(sdfg, "out", True)
 
 def test_copy_input_output():
@@ -48,7 +48,7 @@ def test_copy_input_output():
 
     sdfg = sdottest.to_sdfg()
     sdfg.expand_library_nodes()
-    sdfg.apply_fpga_transformations()
+    sdfg.apply_fpga_transformations(False)
     assert_copy_to_device(sdfg, "inout", True)
 
 if __name__ == "__main__":
