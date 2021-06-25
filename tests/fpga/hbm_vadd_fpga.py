@@ -95,7 +95,7 @@ def create_vadd_multibank_sdfg(bankcountPerArray=2,
                               memlet=tmpout_memlet,
                               src_conn="__out")
 
-    sdfg.apply_fpga_transformations()
+    sdfg.apply_fpga_transformations(False)
     return sdfg
 
 
