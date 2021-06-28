@@ -1,3 +1,4 @@
+from typing import Iterable
 from dace.sdfg import utils
 from dace.sdfg.sdfg import SDFG
 import dace
@@ -16,7 +17,15 @@ def expand_first_libnode(sdfg : dace.SDFG, impl : str, *args, **kwargs):
             expandlibnode(state.parent, state, node, impl, *args, **kwargs)
             return
 
-def dotTest(target : str = None):
+def random_array(size, type = np.float32):
+    if not isinstance(size, Iterable):
+        size = (size,)
+    a = np.random.rand(*size)
+    a = a.astype(type)
+    print(a.dtype)
+    return a
+
+def createDot(target : str = None):
     N = dace.symbol("N")
 
     @dace.program
@@ -25,11 +34,12 @@ def dotTest(target : str = None):
 
     sdfg = sdottest.to_sdfg()
     sdfg.apply_fpga_transformations(False)
-    expand_first_libnode(sdfg, "FPGA_PartialSums")
-    sdfg.view()
-    sdfg.compile()
+    expand_first_libnode(sdfg, "FPGA_HBM_PartialSums")
+    #sdfg.view()
+    sdfg.compile(target)
+    return sdfg
 
-def gemvTest(target : str = None):
+def createGemv(target : str = None):
     N = dace.symbol("N")
     M = dace.symbol("M")
 
@@ -38,14 +48,13 @@ def gemvTest(target : str = None):
         y[:] = A @ x
 
     sdfg = sgemvtest.to_sdfg()
+    sdfg.apply_fpga_transformations(False)
     expand_first_libnode(sdfg, "specialize")
     expand_first_libnode(sdfg, "FPGA_Accumulate")
-    sdfg.apply_fpga_transformations(False)
-    sdfg.apply_strict_transformations()
-    #sdfg.view()
+    sdfg.view()
     sdfg.compile()
 
-def gemmTest(target : str = None):
+def createGemm(target : str = None):
     N = dace.symbol("N")
     M = dace.symbol("M")
     
@@ -61,8 +70,14 @@ def gemmTest(target : str = None):
   # sdfg.view()
     sdfg.compile()
 
+def runDot(csdfg : dace.SDFG, datasize):
+    x = random_array(datasize)
+    y = random_array(datasize)
+    result = random_array(1)
+    check = np.dot(x, y)
+    computed = csdfg(in1=x, in2=y, out=result)
+    assert np.allclose(result, check)
 
 
-dotTest()
-#gemvTest()
-#gemmTest()
+sdfg = createDot()
+runDot(None, 100)
