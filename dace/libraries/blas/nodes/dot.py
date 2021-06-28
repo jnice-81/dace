@@ -375,6 +375,11 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
         sdfg = ExpandDotFpgaPartialSums.expansion(node, parent_state, parent_sdfg, n, partial_width)
         from dace.transformation.dataflow import hbm_transform
         hbm_xform = hbm_transform.HbmTransform(sdfg.sdfg_id, -1, {}, -1)
+        state : SDFGState = sdfg.states()[0]
+        for node in state.source_nodes():
+            if node.label != "partial_sums" and node.label != "reduce":
+                hbm_xform.updated_access_list.append((state, node, "k"))
+        hbm_xform.updated_access_list.append((state, state.sink_nodes()[0], "k"))
         hbm_xform.apply(sdfg)
 
         return sdfg
