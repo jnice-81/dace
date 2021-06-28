@@ -26,7 +26,8 @@ def dotTest(target : str = None):
     sdfg = sdottest.to_sdfg()
     expand_first_libnode(sdfg, "FPGA_PartialSums")
     sdfg.apply_fpga_transformations(False)
-    sdfg.compile(target)
+    #sdfg.view()
+    sdfg.compile()
 
 def gemvTest(target : str = None):
     N = dace.symbol("N")
@@ -57,9 +58,11 @@ def gemmTest(target : str = None):
     sdfg.apply_fpga_transformations(False)
     expand_first_libnode(sdfg, "specialize")
     expand_first_libnode(sdfg, "FPGA1DSystolic")
-    #sdfg.view()
-    sdfg.compile()
+    sdfg.view()
+    #sdfg.compile()
 
-#dotTest()
+
+
+dotTest()
 #gemvTest()
-gemmTest()
+#gemmTest()

@@ -363,6 +363,19 @@ reduce_out = prev + result_in""")
 
         return sdfg
 
+@dace.library.expansion
+class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
+    """
+    Implementation of Dot that uses HBM. Based on ExpandDotFpgaPartialSums.
+    """
+    environments = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, n=None, partial_width=8):
+        sdfg = ExpandDotFpgaPartialSums.expansion(node, parent_state, parent_sdfg, n, partial_width)
+
+        return sdfg
+        
 
 @dace.library.expansion
 class ExpandDotFpgaAccumulate(ExpandTransformation):
@@ -557,6 +570,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "cuBLAS": ExpandDotCuBLAS,
         "FPGA_PartialSums": ExpandDotFpgaPartialSums,
         "FPGA_Accumulate": ExpandDotFpgaAccumulate,
+        "FPGA_HBM_PartialSums": ExpandDotFpgaHbmPartialSums,
     }
     default_implementation = None
 
