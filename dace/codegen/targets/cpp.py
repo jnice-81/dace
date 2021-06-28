@@ -11,7 +11,7 @@ import warnings
 
 import sympy as sp
 from six import StringIO
-from typing import IO, Optional, Tuple, Union, Iterable, Any
+from typing import IO, List, Optional, Tuple, Union
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
@@ -26,89 +26,17 @@ from dace.sdfg import nodes, graph as gr, utils
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 
-"""
+
 def copy_expr(
-    dispatcher,
-    sdfg,
-    dataname,
-    memlet,
-    is_write=None,  # Otherwise it's a read
-    offset=None,
-    relative_offset=True,
-    packed_types=False,
-):
-    datadesc = sdfg.arrays[dataname]
-
-    #Required to ensure that the right bank is generated in case
-    #of multibanks
-    if is_write:
-        usedsubset = memlet.dst_subset
-    else:
-        usedsubset = memlet.src_subset
-    usedsubset = usedsubset or memlet.subset
-
-    if relative_offset:
-        s = usedsubset
-        o = offset
-    else:
-        if offset is None:
-            s = None
-        elif not isinstance(offset, subsets.Subset):
-            s = subsets.Indices(offset)
-        else:
-            s = offset
-        o = None
-    if s is not None:
-        offset_cppstr = cpp_offset_expr(datadesc, s, o)
-    else:
-        offset_cppstr = "0"
-    dt = ""
-
-    def_type, _ = dispatcher.defined_vars.get(dataname)
-
-    # If this is a view, it has already been renamed
-    expr = ptr(
-        dataname, datadesc, usedsubset, sdfg, is_write, dispatcher, 0,
-        def_type == DefinedType.ArrayInterface
-        and not isinstance(datadesc, data.View))
-
-    add_offset = offset_cppstr != "0"
-
-    if def_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
-        return "{}{}{}".format(
-            dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
-
-    elif def_type == DefinedType.StreamArray:
-        return "{}[{}]".format(expr, offset_cppstr)
-
-    elif def_type == DefinedType.FPGA_ShiftRegister:
-        return expr
-
-    elif def_type in [DefinedType.Scalar, DefinedType.Stream]:
-
-        if add_offset:
-            raise TypeError("Tried to offset address of scalar {}: {}".format(
-                dataname, offset_cppstr))
-
-        if def_type == DefinedType.Scalar:
-            return "{}&{}".format(dt, expr)
-        else:
-            return dataname
-    else:
-        raise NotImplementedError("copy_expr not implemented "
-                                  "for connector type: {}".format(def_type))
-"""
-def copy_expr(
-    dispatcher,
-    sdfg,
-    dataname,
-    memlet,
-    is_write=None,  # Otherwise it's a read
-    offset=None,
-    relative_offset=True,
-    packed_types=False,
-    hbmbank = None
-):
+        dispatcher,
+        sdfg,
+        dataname,
+        memlet,
+        is_write=None,  # Otherwise it's a read
+        offset=None,
+        relative_offset=True,
+        packed_types=False,
+        hbm_bank=None):
     datadesc = sdfg.arrays[dataname]
     if relative_offset:
         s = memlet.subset
@@ -131,7 +59,7 @@ def copy_expr(
 
     # If this is a view, it has already been renamed
     expr = ptr(
-        dataname, datadesc, hbmbank, sdfg, is_write, dispatcher, 0,
+        dataname, datadesc, hbm_bank, sdfg, is_write, dispatcher, 0,
         def_type == DefinedType.ArrayInterface
         and not isinstance(datadesc, data.View))
 
@@ -161,6 +89,7 @@ def copy_expr(
         raise NotImplementedError("copy_expr not implemented "
                                   "for connector type: {}".format(def_type))
 
+
 def memlet_copy_to_absolute_strides(dispatcher,
                                     sdfg,
                                     memlet,
@@ -180,30 +109,28 @@ def memlet_copy_to_absolute_strides(dispatcher,
                              memlet,
                              is_write=False,
                              packed_types=packed_types,
-                             hbmbank=memlet.subset)
+                             hbm_bank=memlet.subset)
         if memlet.other_subset is not None:
-            dst_expr = copy_expr(
-                dispatcher,
-                sdfg,
-                dst_node.data,
-                memlet,
-                is_write=True,
-                offset=memlet.other_subset,
-                relative_offset=False,
-                packed_types=packed_types,
-                hbmbank=memlet.other_subset
-            )
+            dst_expr = copy_expr(dispatcher,
+                                 sdfg,
+                                 dst_node.data,
+                                 memlet,
+                                 is_write=True,
+                                 offset=memlet.other_subset,
+                                 relative_offset=False,
+                                 packed_types=packed_types,
+                                 hbm_bank=memlet.other_subset)
             dst_subset = memlet.other_subset
         else:
             dst_expr = copy_expr(dispatcher,
-                             sdfg,
-                             dst_node.data,
-                             memlet,
-                             is_write=True,
-                             offset=None,
-                             relative_offset=False,
-                             packed_types=packed_types,
-                             hbmbank=memlet.subset)
+                                 sdfg,
+                                 dst_node.data,
+                                 memlet,
+                                 is_write=True,
+                                 offset=None,
+                                 relative_offset=False,
+                                 packed_types=packed_types,
+                                 hbm_bank=memlet.subset)
             dst_subset = subsets.Range.from_array(dst_nodedesc)
         src_subset = memlet.subset
 
@@ -214,30 +141,28 @@ def memlet_copy_to_absolute_strides(dispatcher,
                              memlet,
                              is_write=True,
                              packed_types=packed_types,
-                             hbmbank=memlet.subset)
+                             hbm_bank=memlet.subset)
         if memlet.other_subset is not None:
-            src_expr = copy_expr(
-                dispatcher,
-                sdfg,
-                src_node.data,
-                memlet,
-                is_write=False,
-                offset=memlet.other_subset,
-                relative_offset=False,
-                packed_types=packed_types,
-                hbmbank=memlet.other_subset
-            )
+            src_expr = copy_expr(dispatcher,
+                                 sdfg,
+                                 src_node.data,
+                                 memlet,
+                                 is_write=False,
+                                 offset=memlet.other_subset,
+                                 relative_offset=False,
+                                 packed_types=packed_types,
+                                 hbm_bank=memlet.other_subset)
             src_subset = memlet.other_subset
         else:
             src_expr = copy_expr(dispatcher,
-                                sdfg,
-                                src_node.data,
-                                memlet,
-                                is_write=False,
-                                offset=None,
-                                relative_offset=False,
-                                packed_types=packed_types,
-                                hbmbank=memlet.subset)
+                                 sdfg,
+                                 src_node.data,
+                                 memlet,
+                                 is_write=False,
+                                 offset=None,
+                                 relative_offset=False,
+                                 packed_types=packed_types,
+                                 hbm_bank=memlet.subset)
             src_subset = subsets.Range.from_array(src_nodedesc)
         dst_subset = memlet.subset
 
@@ -293,13 +218,13 @@ def memlet_copy_to_absolute_strides(dispatcher,
 
 def ptr(name: str,
         desc: data.Data = None,
-        subset_info: "Union[subsets.Subset, int]" = None,
+        subset_info: Union[subsets.Subset, int] = None,
         sdfg: dace.SDFG = None,
         is_write: bool = None,
         dispatcher=None,
         ancestor: int = None,
         is_array_interface: bool = False,
-        interface_id: "Union[int, list[int]]" = None) -> str:
+        interface_id: Union[int, List[int]] = None) -> str:
     """
     Returns a string that points to the data based on its name, and various other conditions
     that may apply for that data field.
@@ -318,27 +243,52 @@ def ptr(name: str,
         from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
         if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
             return f'__state->{name}'
-    if (desc is not None and utils.is_HBM_array(desc)):
+    if (desc is not None and utils.is_hbm_array(desc)):
         if (subset_info == None):
             raise ValueError(
-                "Cannot generate name for hbmbank without subset info")
+                "Cannot generate name for HBM bank without subset info")
         elif (isinstance(subset_info, int)):
             name = f"hbm{subset_info}_{name}"
         elif (isinstance(subset_info, subsets.Subset)):
             if (sdfg == None):
                 raise ValueError(
-                    "Cannot generate name for hbmbank using subset if sdfg not provided"
+                    "Cannot generate name for HBM bank using subset if sdfg not provided"
                 )
-            low, _ = utils.get_multibank_ranges_from_subset(
-                subset_info, sdfg, True,
-                f"{name} with subset {str(subset_info)}")
+            low, high = utils.get_multibank_ranges_from_subset(
+                subset_info, sdfg)
+            if (low + 1 != high):
+                raise ValueError(
+                    "ptr cannot generate HBM names for subsets accessing more than one HBM bank"
+                )
             name = f"hbm{low}_{name}"
-            subset_info = low  #used for arrayinterface where it must be int
+            subset_info = low  #used for arrayinterface name where it must be int
     if is_array_interface:
         if is_write is None:
             raise ValueError("is_write must be set for ArrayInterface.")
-        name = array_interface_variable(name, is_write, dispatcher, ancestor,
-                                        interface_id, subset_info)
+        ptr_in = f"__{name}_in"
+        ptr_out = f"__{name}_out"
+        if dispatcher is not None:
+            # DaCe allows reading from an output connector, even though it
+            # is not an input connector. If this occurs, panic and read
+            # from the output interface instead
+            if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
+                # Throw a KeyError if this pointer also doesn't exist
+                dispatcher.defined_vars.get(ptr_out, ancestor)
+                # Otherwise use it
+                name = ptr_out
+            else:
+                name = ptr_in
+        else:
+            # We might call this before the variable is even defined (e.g., because
+            # we are about to define it), so if the dispatcher is not passed, just
+            # return the appropriate string
+            name = ptr_out if is_write else ptr_in
+        # Append the interface id, if provided
+        if interface_id is not None:
+            if isinstance(interface_id, tuple):
+                name = f"{name}_{interface_id[subset_info]}"
+            else:
+                name = f"{name}_{interface_id}"
     return name
 
 
@@ -604,14 +554,15 @@ def cpp_offset_expr(d: data.Data,
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    nomagicsubset = utils.modify_subset_magic(d, subset_in, 0)
+    if utils.is_hbm_array(d):
+        subset_in = utils.modify_distributed_subset(subset_in, 0)
 
     # Offset according to parameters, then offset according to array
     if offset is not None:
-        subset = nomagicsubset.offset_new(offset, False)
+        subset = subset_in.offset_new(offset, False)
         subset.offset(d.offset, False)
     else:
-        subset = nomagicsubset.offset_new(d.offset, False)
+        subset = subset_in.offset_new(d.offset, False)
 
     # Obtain start range from offsetted subset
     indices = indices or ([0] * len(d.strides))
@@ -1249,11 +1200,12 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                                       expr_semicolon=False),
                             ))
                         else:
-                            targetarrayif = ptr(memlet.data, desc,
-                                                memlet.dst_subset, self.sdfg,
-                                                True, None, None, True)
+                            array_interface_name = ptr(memlet.data, desc,
+                                                       memlet.dst_subset,
+                                                       self.sdfg, True, None,
+                                                       None, True)
                             newnode = ast.Name(
-                                id=f"{targetarrayif}"
+                                id=f"{array_interface_name}"
                                 f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False)}]"
                                 f" = {cppunparse.cppunparse(value, expr_semicolon=False)};"
                             )
@@ -1465,40 +1417,3 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                         [e.src, e.dst],
                     )
                 # Otherwise, no synchronization necessary
-
-
-def array_interface_variable(var_name: str,
-                             is_write: bool,
-                             dispatcher: Optional["TargetDispatcher"],
-                             ancestor: int = 0,
-                             interface_id: "Union[int, list[int]]" = None,
-                             accessed_subset: int = None):
-    """
-    Generates the variable name of an ArrayInterface variable. Used by ptr
-    only at the moment.
-    """
-    ptr_in = f"__{var_name}_in"
-    ptr_out = f"__{var_name}_out"
-    if dispatcher is not None:
-        # DaCe allows reading from an output connector, even though it
-        # is not an input connector. If this occurs, panic and read
-        # from the output interface instead
-        if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
-            # Throw a KeyError if this pointer also doesn't exist
-            dispatcher.defined_vars.get(ptr_out, ancestor)
-            # Otherwise use it
-            result = ptr_out
-        else:
-            result = ptr_in
-    else:
-        # We might call this before the variable is even defined (e.g., because
-        # we are about to define it), so if the dispatcher is not passed, just
-        # return the appropriate string
-        result = ptr_out if is_write else ptr_in
-    #Append the interface id, if provided
-    if interface_id is not None:
-        if isinstance(interface_id, tuple):
-            result = f"{result}_{interface_id[accessed_subset]}"
-        else:
-            result = f"{result}_{interface_id}"
-    return result

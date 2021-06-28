@@ -348,14 +348,15 @@ class FPGACodeGen(TargetCodeGenerator):
             for is_output, argname, arg, _ in state_parameters:
                 # Streams and Views are not passed as arguments
                 if (isinstance(arg, dt.Array)):
-                    for bank in utils.iterate_multibank_arrays(
+                    for bank in utils.iterate_hbm_multibank_arrays(
                             argname, arg, sdfg):
                         currentname = cpp.ptr(argname, arg, bank)
                         kernel_args_call_host.append(
                             arg.as_arg(False, name=currentname))
                         kernel_args_opencl.append(
                             FPGACodeGen.make_opencl_parameter(currentname, arg))
-                else:
+                elif (not isinstance(arg, dt.Stream)
+                      and not isinstance(arg, dt.View)):
                     kernel_args_call_host.append(arg.as_arg(False,
                                                             name=argname))
                     kernel_args_opencl.append(
@@ -587,15 +588,15 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         interface_id = data_to_interface[dataname]
                     else:
                         # Get and update global memory interface ID
-                        if utils.is_HBM_array(desc):
-                            if_ids = []
-                            for bank in utils.iterate_multibank_arrays(
+                        if utils.is_hbm_array(desc):
+                            tmp_interface_ids = []
+                            for bank in utils.iterate_hbm_multibank_arrays(
                                     dataname, desc, sdfg):
                                 ptr_str = cpp.ptr(dataname, desc, bank)
-                                if_id = global_interfaces[ptr_str]
+                                tmp_interface_id = global_interfaces[ptr_str]
                                 global_interfaces[ptr_str] += 1
-                                if_ids.append(if_id)
-                            interface_id = tuple(if_ids)
+                                tmp_interface_ids.append(tmp_interface_id)
+                            interface_id = tuple(tmp_interface_ids)
                             data_to_interface[dataname] = interface_id
                         else:
                             interface_id = global_interfaces[dataname]
@@ -608,53 +609,42 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     trace = utils.trace_nested_access(inner_node, subgraph,
                                                       sdfg)
                     bank = None
-                    banktype = None
+                    bank_type = None
                     for (trace_in, trace_out), _, _, trace_sdfg in trace:
                         trace_node = trace_in or trace_out
                         trace_name = trace_node.data
                         trace_desc = trace_node.desc(trace_sdfg)
-                        if "bank" in trace_desc.location or "hbmbank" in trace_desc.location:
-                            if "bank" in trace_desc.location and "hbmbank" in trace_desc.location:
-                                raise cgx.CodegenError(
-                                    "Found memory bank specifier "
-                                    f"with bank and hbmbank defined for {trace_name}"
-                                )
-                            if ("bank" in trace_desc.location):
-                                trace_bank = trace_desc.location["bank"]
-                                trace_type = "DDR"
-                            else:
-                                #this only refers to one bank because of the preprocessed candidates
-                                trace_bank = trace_desc.location["hbmbank"]
-                                trace_type = "HBM"
-                            if (bank is not None and banktype is not None and
-                                (bank != trace_bank or banktype != trace_type)):
+                        if "bank" in trace_desc.location:
+                            trace_type, trace_bank = utils.parse_location_bank(
+                                trace_desc)
+                            if (bank is not None and bank_type is not None
+                                    and (bank != trace_bank
+                                         or bank_type != trace_type)):
                                 raise cgx.CodegenError(
                                     "Found inconsistent memory bank "
                                     f"specifier for {trace_name}.")
                             bank = trace_bank
-                            banktype = trace_type
+                            bank_type = trace_type
 
                     # Make sure the array has been allocated on this bank in the
                     # outermost scope
-                    if bank is not None:
+                    if bank_type is not None:
                         outer_node = trace[0][0][0] or trace[0][0][1]
                         outer_desc = outer_node.desc(trace[0][2])
-                        okhbm, okbank = False, False
-                        if banktype == "HBM":
-                            okhbm = "hbmbank" in outer_desc.location and outer_desc.location[
-                                "hbmbank"] == bank
-                        if banktype == "DDR":
-                            okbank = "bank" in outer_desc.location and str(
-                                outer_desc.location["bank"]) == str(bank)
-                        if not (okhbm or okbank):
+                        okbank = False
+                        if ("bank" in outer_desc.location):
+                            trace_type, trace_bank = utils.parse_location_bank(
+                                outer_desc)
+                            okbank = (trace_type == bank_type
+                                      and trace_bank == bank)
+                        if not okbank:
                             raise cgx.CodegenError(
                                 "Memory bank allocation must be present on "
                                 f"outermost data descriptor {outer_node.data} "
                                 "to be allocated correctly.")
-                        bank_assignments[dataname] = (banktype, bank)
+                        bank_assignments[dataname] = (bank_type, bank)
                     else:
-                        #Is it ok to default set this?
-                        bank_assignments[dataname] = ("DDR", 0)
+                        bank_assignments[dataname] = None
                 else:
                     interface_id = None
                 if (not desc.transient
@@ -807,49 +797,44 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
                         # TODO: Distinguish between read, write, and read+write
                         self._allocated_global_arrays.add(node.data)
-                        memory_bank_arg_type = "DDR"
                         memory_bank_arg_count = 1
-                        bankoffset = 0
-                        if "bank" in nodedesc.location:
-                            try:
-                                bank = int(nodedesc.location["bank"])
-                            except ValueError:
-                                raise ValueError(
-                                    "FPGA memory bank specifier "
-                                    "must be an integer: {}".format(
-                                        nodedesc.location["bank"]))
-                            memory_bank_arg_type = "DDR"
-                            bankoffset = bank
-                        elif "hbmbank" in nodedesc.location:
-                            hbmbank = nodedesc.location["hbmbank"]
-                            memory_bank_arg_type = "HBM"
-                            banklow, bankhigh = utils.get_multibank_ranges_from_subset(
-                                hbmbank, sdfg, False, f"array {dataname}")
-                            memory_bank_arg_count = bankhigh - banklow
-                            arrsize = dace.symbolic.pystr_to_symbolic(
-                                f"({str(arrsize)}) / {str(bankhigh - banklow)}")
-                            bankoffset = banklow
+                        bank_offset = 0
+                        is_hbm = False
+                        bank_info = utils.parse_location_bank(nodedesc)
+                        if bank_info is not None:
+                            bank_type, bank = bank_info
+                            is_hbm = bank_type == "HBM"
+                            if is_hbm:
+                                banklow, bankhigh = utils.get_multibank_ranges_from_subset(
+                                    bank, sdfg)
+                                memory_bank_arg_count = bankhigh - banklow
+                                arrsize = dace.symbolic.pystr_to_symbolic(
+                                    f"({str(arrsize)}) / {str(bankhigh - banklow)}"
+                                )
+                                bank_offset = banklow
+                            else:
+                                bank_offset = int(bank)
                         # Define buffer, using proper type
                         for bank_index in range(memory_bank_arg_count):
                             allocname = cpp.ptr(dataname, nodedesc, bank_index)
                             result_decl.write(
                                 "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};\n"
                                 .format(nodedesc.dtype.ctype, allocname))
-                            if memory_bank_arg_type == "HBM":
+                            if is_hbm:
                                 result_alloc.write(
                                     "{} = __state->fpga_context->Get()."
                                     "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                                     "(hlslib::ocl::StorageType::HBM, {}, {});\n"
                                     .format(allocname, nodedesc.dtype.ctype,
-                                            bankoffset + bank_index,
+                                            bank_offset + bank_index,
                                             cpp.sym2cpp(arrsize)))
-                            elif memory_bank_arg_type == "DDR":
+                            else:
                                 result_alloc.write(
                                     "{} = __state->fpga_context->Get()."
                                     "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                                     "(hlslib::ocl::MemoryBank::bank{}, {});".
                                     format(allocname, nodedesc.dtype.ctype,
-                                           bankoffset, cpp.sym2cpp(arrsize)))
+                                           bank_offset, cpp.sym2cpp(arrsize)))
                             self._dispatcher.defined_vars.add(
                                 allocname, DefinedType.Pointer,
                                 'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
@@ -1122,9 +1107,12 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             dst_nodedesc = dst_node.desc(sdfg)
             src_is_subset = memlet._is_data_src is None or memlet._is_data_src
 
-            copy_shape = utils.modify_subset_magic(
-                src_nodedesc if src_is_subset else dst_nodedesc,
-                memlet.subset.bounding_box_size(), -1)
+            copy_shape = memlet.subset.bounding_box_size()
+            if (src_is_subset and utils.is_hbm_array(src_nodedesc) or not src_is_subset and 
+                utils.is_hbm_array(dst_nodedesc)):
+                copy_shape = utils.modify_distributed_subset(
+                    copy_shape, -1)
+
             offset_src, offset_dst = "0", "0"
             if memlet.src_subset is not None:
                 offset_src = cpp.cpp_array_expr(
@@ -1346,7 +1334,6 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                                      cpp.sym2cpp(copy_dim), i),
                         sdfg, state_id, dst_node)
 
-                    #Used to pass node.data but I don't think node is defined here, thats why it's changed
                     if ignore_dependencies:
                         self.generate_no_dependence_post(
                             callsite_stream, sdfg, state_id, dst_node,
@@ -1498,14 +1485,14 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         dst_schedule = None if dst_parent is None else dst_parent.map.schedule
         state_dfg = sdfg.nodes()[state_id]
 
-        #Check if this is a copy memlet using at least one HBM-Array
+        #Check if this is a copy memlet using at least one HBM array
         do_default_copy = True
         if (isinstance(src_node, dace.sdfg.nodes.AccessNode)
                 and isinstance(dst_node, dace.sdfg.nodes.AccessNode)):
             src_array = src_node.desc(sdfg)
             dst_array = dst_node.desc(sdfg)
-            src_is_hbm = utils.is_HBM_array(src_array)
-            dst_is_hbm = utils.is_HBM_array(dst_array)
+            src_is_hbm = utils.is_hbm_array(src_array)
+            dst_is_hbm = utils.is_hbm_array(dst_array)
             if src_is_hbm or dst_is_hbm:
                 do_default_copy = False
                 modedge = copy.deepcopy(edge)
@@ -1525,13 +1512,13 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 for i in range(num_accessed_banks):
                     src_index = oldmem.src_subset[0][0] + i
                     dst_index = oldmem.dst_subset[0][0] + i
-                    #Support for ignoring the magic index if it's not required e.g on host
+                    #Support for ignoring the distributed index if it's not required, e.g. on the host
                     if src_is_hbm or num_accessed_banks > 1:
-                        mem.src_subset = utils.modify_subset_magic(
-                            src_array, mem.src_subset, src_index, True)
+                        mem.src_subset = utils.modify_distributed_subset(
+                            mem.src_subset, src_index)
                     if dst_is_hbm or num_accessed_banks > 1:
-                        mem.dst_subset = utils.modify_subset_magic(
-                            dst_array, mem.dst_subset, dst_index, True)
+                        mem.dst_subset = utils.modify_distributed_subset(
+                            mem.dst_subset, dst_index)
                     self._emit_copy(sdfg, state_id, src_node, src_storage,
                                     dst_node, dst_storage, dst_schedule,
                                     modedge, state_dfg, function_stream,
@@ -2022,10 +2009,13 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     and not cpp.is_write_conflicted(dfg, edge)
                     and self._dispatcher.defined_vars.has(edge.src_conn)):
                 accessed_subset = 0
-                if utils.is_HBM_array(datadesc):
-                    accessed_subset, _ = utils.get_multibank_ranges_from_subset(
-                        edge.data.dst_subset or edge.data.subset, sdfg, True,
-                        f"at {str(node)} in state {state_id}")
+                if utils.is_hbm_array(datadesc):
+                    accessed_subset, high_check = utils.get_multibank_ranges_from_subset(
+                        edge.data.dst_subset or edge.data.subset, sdfg)
+                    if accessed_subset + 1 != high_check:
+                        raise cgx.CodegenError(
+                            "generate_tasklet_postamble was called on HBM memlet accessing multiple banks"
+                        )
 
                 self.generate_no_dependence_post(after_memlets_stream, sdfg,
                                                  state_id, node, edge.src_conn,

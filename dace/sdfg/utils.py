@@ -1031,45 +1031,39 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
     return result
 
 
-def is_HBM_array(array: dt.Data,
-                 onlyTrueIfMultibank: bool = False,
-                 sdfg: SDFG = None):
+def is_hbm_array(array: dt.Data):
     """
     :return: True if this array is placed on HBM
-    :param onlyTrueIfMultibank: Return only True if this array is placed on more then
-        one HBM-bank. If True then :param sdfg: must be set.
     """
     if (isinstance(array, dt.Array)
-            and array.storage == dtypes.StorageType.FPGA_Global
-            and "hbmbank" in array.location):
-        if onlyTrueIfMultibank:
-            low, high = get_multibank_ranges_from_subset(array.location, sdfg)
-            return high - low > 1
-        else:
-            return True
-    return False
+            and array.storage == dtypes.StorageType.FPGA_Global):
+        res = parse_location_bank(array)
+        return res is not None and res[0] == "HBM"
+    else:
+        return False
 
 
-def iterate_multibank_arrays(arrayname: str, array: dt.Array, sdfg: SDFG):
+def iterate_hbm_multibank_arrays(arrayname: str, array: dt.Array, sdfg: SDFG):
     """
     Small helper function that iterates over the bank indices
-    if the provided array is spanned across multiple hbmbanks.
+    if the provided array is spanned across multiple HBM banks.
     Otherwise just returns 0 once.
     """
-    if is_HBM_array(array):
-        low, high = get_multibank_ranges_from_subset(array.location["hbmbank"],
-                                                     sdfg, False,
-                                                     f" array {arrayname}")
-        for i in range(high - low):
-            yield i
+    res = parse_location_bank(array)
+    if res is not None:
+        banktype, bankplace = res
+        if (banktype == "HBM"):
+            low, high = get_multibank_ranges_from_subset(bankplace, sdfg)
+            for i in range(high - low):
+                yield i
+        else:
+            yield 0
     else:
         yield 0
 
 
-def modify_subset_magic(array: dt.Data,
-                        subset: Union[sbs.Subset, list, tuple],
-                        change: int,
-                        force: bool = False):
+def modify_distributed_subset(subset: Union[sbs.Subset, list, tuple],
+                              change: int):
     """
     Applies changes to magic indices from a subset if array is a HBM-array, otherwise
     returns subset. subset is deepcopied before any modification to it is done.
@@ -1077,36 +1071,30 @@ def modify_subset_magic(array: dt.Data,
         the magic index is completly removed
     :param force: Modify the first index even if this is not a HBM array
     """
-    if (not isinstance(array, dt.Array)):
-        return subset
-    if is_HBM_array(array) or force:
-        cps = copy.deepcopy(subset)
-        if isinstance(subset, sbs.Subset):
-            if change == -1:
-                cps.pop([0])
-            else:
-                cps[0] = (change, change, 1)
-        elif isinstance(subset, list) or isinstance(subset, tuple):
-            if isinstance(subset, tuple):
-                cps = list(cps)
-            if change == -1:
-                cps.pop(0)
-            else:
-                cps[0] = change
-            if isinstance(subset, tuple):
-                cps = tuple(cps)
+    cps = copy.deepcopy(subset)
+    if isinstance(subset, sbs.Subset):
+        if change == -1:
+            cps.pop([0])
         else:
-            raise ValueError("unsupported type passed to modify_subset_magic")
+            cps[0] = (change, change, 1)
+    elif isinstance(subset, list) or isinstance(subset, tuple):
+        if isinstance(subset, tuple):
+            cps = list(cps)
+        if change == -1:
+            cps.pop(0)
+        else:
+            cps[0] = change
+        if isinstance(subset, tuple):
+            cps = tuple(cps)
     else:
-        cps = subset
+        raise ValueError(
+            "unsupported type passed to modify_distributed_subset")
+    
     return cps
 
 
-def get_multibank_ranges_from_subset(
-        subset: Union[sbs.Subset, str],
-        sdfg: SDFG,
-        assume_single: bool = False,
-        codegenlocation: str = None) -> Tuple[int, int]:
+def get_multibank_ranges_from_subset(subset: Union[sbs.Subset, str],
+                                     sdfg: SDFG) -> Tuple[int, int]:
     """
     Returns the upper and lower end of the accessed HBM-range, evaluated using the
     constants on the SDFG.
@@ -1120,28 +1108,35 @@ def get_multibank_ranges_from_subset(
     if isinstance(subset, str):
         subset = sbs.Range.from_string(subset)
     low, high, stride = subset[0]
+    if stride != 1:
+        raise NotImplementedError(f"Strided HBM subsets not supported.")
     try:
-        if stride != 1:
-            raise ValueError(f"Cannot handle strided HBM-subset")
-        try:
-            low = int(symbolic.resolve_symbol_to_constant(low, sdfg))
-            high = int(symbolic.resolve_symbol_to_constant(high, sdfg))
-        except:
-            raise ValueError(
-                f"Only constant evaluatable indices allowed for HBM-memlets on the bank index "
-            )
-        if (assume_single and low != high):
-            raise ValueError(
-                "Found HBM-Memlet accessing multiple banks in a place"
-                " where only one bank may be accessed")
-    except ValueError as e:
-        errormsg = str(e)
-        if (codegenlocation is None):
-            raise ValueError(errormsg)
-        else:
-            raise dace.codegen.exceptions.CodegenError(
-                f"{errormsg} at {codegenlocation}")
+        low = int(symbolic.resolve_symbol_to_constant(low, sdfg))
+        high = int(symbolic.resolve_symbol_to_constant(high, sdfg))
+    except:
+        raise ValueError(
+            f"Only constant evaluatable indices allowed for HBM-memlets on the bank index."
+        )
     return (low, high + 1)
+
+
+def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
+    if "bank" in array.location:
+        val: str = array.location["bank"]
+        split = val.split(".")
+        if (len(split) != 2):
+            raise ValueError(
+                f"Failed to parse {val} as value for location['bank']")
+        split[0] = split[0].upper()
+
+        if (split[0] == "DDR" or split[0] == "HBM"):
+            return (split[0], split[1])
+        else:
+            raise ValueError(
+                f"{split[0]} is an invalid bank type for location['bank']. Supported are HBM and DDR."
+            )
+    else:
+        return None
 
 
 def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
