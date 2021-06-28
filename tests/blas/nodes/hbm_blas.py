@@ -75,9 +75,10 @@ def runDot(csdfg : dace.SDFG, datasize):
     y = random_array(datasize)
     result = random_array(1)
     check = np.dot(x, y)
-    computed = csdfg(in1=x, in2=y, out=result)
+    csdfg(in1=x, in2=y, out=result, N=datasize)
     assert np.allclose(result, check)
 
 
-sdfg = createDot()
-runDot(None, 100)
+sdfg = createDot("mycompiledstuff/")
+#sdfg = utils.load_precompiled_sdfg("mycompiledstuff")
+runDot(sdfg, 100)
