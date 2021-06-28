@@ -1,3 +1,4 @@
+from dace.sdfg import utils
 from dace.sdfg.sdfg import SDFG
 import dace
 import dace.libraries.blas.nodes as blas
@@ -10,12 +11,12 @@ def expandlibnode(sdfg : dace.SDFG, state : dace.SDFGState,
     node.expand(sdfg, state, *args, **kwargs)
 
 def expand_first_libnode(sdfg : dace.SDFG, impl : str, *args, **kwargs):
-    for state in sdfg.nodes():
-        for node in state.nodes():
-            if(isinstance(node, nd.LibraryNode)):
-                expandlibnode(sdfg, state, node, impl, *args, **kwargs)
+    for node, state in sdfg.all_nodes_recursive():
+        if(isinstance(node, nd.LibraryNode)):
+            expandlibnode(state.parent, state, node, impl, *args, **kwargs)
+            return
 
-def dotTest():
+def dotTest(target : str = None):
     N = dace.symbol("N")
 
     @dace.program
@@ -24,11 +25,10 @@ def dotTest():
 
     sdfg = sdottest.to_sdfg()
     expand_first_libnode(sdfg, "FPGA_PartialSums")
-    sdfg.apply_fpga_transformations()
-    #sdfg.view()
-    sdfg.compile()
+    sdfg.apply_fpga_transformations(False)
+    sdfg.compile(target)
 
-def gemvTest():
+def gemvTest(target : str = None):
     N = dace.symbol("N")
     M = dace.symbol("M")
 
@@ -39,8 +39,27 @@ def gemvTest():
     sdfg = sgemvtest.to_sdfg()
     expand_first_libnode(sdfg, "specialize")
     expand_first_libnode(sdfg, "FPGA_Accumulate")
-    sdfg.view()
+    sdfg.apply_fpga_transformations(False)
+    sdfg.apply_strict_transformations()
+    #sdfg.view()
+    sdfg.compile()
 
+def gemmTest(target : str = None):
+    N = dace.symbol("N")
+    M = dace.symbol("M")
+    
 
-dotTest()
+    @dace.program
+    def sgemmtest(A : dace.float32[M, N], B : dace.float32[N, 100], C : dace.float32[M, 100]):
+        C[:] = A @ B
+
+    sdfg = sgemmtest.to_sdfg()
+    sdfg.apply_fpga_transformations(False)
+    expand_first_libnode(sdfg, "specialize")
+    expand_first_libnode(sdfg, "FPGA1DSystolic")
+    #sdfg.view()
+    sdfg.compile()
+
+#dotTest()
 #gemvTest()
+gemmTest()
