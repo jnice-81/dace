@@ -378,8 +378,12 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
         state : SDFGState = sdfg.states()[0]
         for node in state.source_nodes():
             if node.label != "partial_sums" and node.label != "reduce":
-                hbm_xform.updated_access_list.append((state, node, "k"))
-        hbm_xform.updated_access_list.append((state, state.sink_nodes()[0], "k"))
+                hbm_xform.updated_access_list.append((state, node, "k", True))
+        hbm_xform.updated_access_list.append((state, state.sink_nodes()[0], "k", False))
+
+        hbm_xform.outer_map_range = {"k":"0:2"}
+        hbm_xform.updated_array_list.append(("_x", "hbm.0:2"))
+        hbm_xform.updated_array_list.append(("_y", "hbm.2:4"))
         hbm_xform.apply(sdfg)
 
         return sdfg
