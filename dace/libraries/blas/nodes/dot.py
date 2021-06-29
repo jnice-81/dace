@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+from sys import implementation
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -372,18 +373,18 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, partial_width=8):
+        (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(
+            parent_sdfg, parent_state)
+        if n is None:
+            n = list(desc_x.shape)[1]
         sdfg = ExpandDotFpgaPartialSums.expansion(node, parent_state, parent_sdfg, n, partial_width)
         from dace.transformation.dataflow import hbm_transform
         hbm_xform = hbm_transform.HbmTransform(sdfg.sdfg_id, -1, {}, -1)
         state : SDFGState = sdfg.states()[0]
         for node in state.source_nodes():
             if node.label != "partial_sums" and node.label != "reduce":
-                hbm_xform.updated_access_list.append((state, node, "k", True))
-        hbm_xform.updated_access_list.append((state, state.sink_nodes()[0], "k", False))
-
+                hbm_xform.updated_access_list.append((state, node, "k"))
         hbm_xform.outer_map_range = {"k":"0:2"}
-        hbm_xform.updated_array_list.append(("_x", "hbm.0:2"))
-        hbm_xform.updated_array_list.append(("_y", "hbm.2:4"))
         hbm_xform.apply(sdfg)
 
         return sdfg
@@ -616,7 +617,10 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         sqdims1 = squeezed1.squeeze()
         sqdims2 = squeezed2.squeeze()
 
-        if len(squeezed1.size()) != 1 or len(squeezed2.size()) != 1:
+        if self.implementation == "FPGA_HBM_PartialSums":
+            if len(squeezed1.size()) != 2 or len(squeezed2.size()) != 2:
+                raise ValueError("This implementation of dot product needs 2-dimensional arrays")
+        elif len(squeezed1.size()) != 1 or len(squeezed2.size()) != 1:
             raise ValueError(
                 "dot product only supported on 1-dimensional arrays")
         if out_memlet.subset.num_elements() != 1:
@@ -639,7 +643,6 @@ class Dot(dace.sdfg.nodes.LibraryNode):
             raise TypeError("Data types of input and output must be equal: "
                             f"{desc_x.dtype}, {desc_res.dtype}")
 
-        # We are guaranteed that there is only one non-squeezed dimension
         stride_x = desc_x.strides[sqdims1[0]]
         stride_y = desc_y.strides[sqdims2[0]]
         n = squeezed1.num_elements()
