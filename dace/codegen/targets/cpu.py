@@ -1534,7 +1534,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if (memlet.data in sdfg.arrays
                     and sdutils.is_hbm_array(sdfg.arrays[memlet.data])):
                 raise NotImplementedError(
-                    "HBM in nested SDFG's not supported in non-FPGA code.")
+                    "HBM in nested SDFGs not supported in non-FPGA code.")
 
         memlet_references = []
         for _, _, _, vconn, in_memlet in sorted(state.in_edges(node),
