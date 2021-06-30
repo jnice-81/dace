@@ -397,23 +397,50 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
             n = list(desc_x.shape)[1]
 
         #modify the FpgaPartialSums implementation to use HBM
-        sdfg = ExpandDotFpgaPartialSums.expansion(node, parent_state, parent_sdfg, n, partial_width)
+        sdfg: SDFG = ExpandDotFpgaPartialSums.expansion(node, parent_state, parent_sdfg, n, partial_width)
+        state: SDFGState = sdfg.states()[0]
+
+        for node in state.sink_nodes():
+            if node.label == '_result':
+                state.remove_node(node)
+        
+        for node in state.sink_nodes():
+            if node.label == 'reduce':
+                utils.update_path_subsets(state, node, 
+                    subsets.Range.from_string("k"))
+        sdfg.arrays.pop("_result")
+        utils.update_array_shape(sdfg, "reduce", [high1-low1])
+        sdfg.arrays["reduce"].transient = False
+
         from dace.transformation.dataflow import hbm_transform
         hbm_xform = hbm_transform.HbmTransform(sdfg.sdfg_id, -1, {}, -1)
-        state : SDFGState = sdfg.states()[0]
         for node in state.source_nodes():
             if node.label != "partial_sums" and node.label != "reduce":
                 hbm_xform.update_hbm_access_list.append((state, node, "k"))
         hbm_xform.outer_map_range = {param:f"0:{high1 - low1}"}
         hbm_xform.update_array_list.append(("_x", f"hbm.{low1}:{high1}"))
         hbm_xform.update_array_list.append(("_y", f"hbm.{low2}:{high2}"))
-        hbm_xform.update_array_list.append(("_result", f"ddr.{result_bank}"))
         hbm_xform.apply(sdfg)
-        
 
-        for node in state.sink_nodes():
-            if node.label == "_result":
-                pass
+        state: SDFGState = sdfg.states()[0]
+        sdfg.arrays["reduce"].transient = True
+        sdfg.add_array("_result", [1], desc_x.dtype, 
+            dtypes.StorageType.FPGA_Global)
+        sdfg.arrays["_result"].location["bank"] = "DDR.0"
+        reduce_read = list(state.sink_nodes())[0]
+        reduce_write = state.add_access("reduce")
+        result_write = state.add_write("_result")
+        map_entry, map_exit = state.add_map("final_reduce", {"k":f"1:{high1-low1}"})
+        tasklet = state.add_tasklet("reduce", set(["_fixed", "_in"]), set(["_out"]), 
+        "_out = _out + _in")
+        state.add_memlet_path(reduce_read, map_entry, tasklet, 
+            memlet=mm.Memlet("reduce[0]"), dst_conn="_fixed")
+        state.add_memlet_path(reduce_read, map_entry, tasklet, 
+            memlet=mm.Memlet("reduce[k]"), dst_conn="_in")
+        state.add_memlet_path(tasklet, map_exit, reduce_write,
+            memlet=mm.Memlet("reduce[0]"), src_conn="_out")
+        state.add_memlet_path(reduce_write, result_write, 
+            memlet=mm.Memlet("reduce[0]"))
 
         return sdfg
         

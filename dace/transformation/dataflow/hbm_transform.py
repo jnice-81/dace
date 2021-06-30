@@ -35,21 +35,6 @@ class HbmTransform(transformation.Transformation):
         default={"k" : "0"},
         desc="Stores the range for the outer HBM map. Defaults to k = 0."
     )
-
-    ######################
-    #Helper functions
-
-    def _accessnode_to_innermost_edge(self, state : SDFGState, node : nd.AccessNode):
-        some_edge = list(state.all_edges(node))
-        if len(some_edge) != 1:
-            raise ValueError("You may not specify an AccessNode in the update_access_list or in "
-                "update_hbm_access_list if it does not have exactly one attached memlet path")
-        some_edge = some_edge[0]
-        if some_edge.dst == node:
-            edge = state.memlet_path(some_edge)[0]
-        else:
-            edge = state.memlet_path(some_edge)[-1]
-        return edge
     
     ######################
     #functions for avoiding long unsplitted code
@@ -169,7 +154,7 @@ class HbmTransform(transformation.Transformation):
         #update memlet subset to access hbm
         for path_desc_state, path_description, subset_index in self.update_hbm_access_list:
             if isinstance(path_description, nd.AccessNode):
-                path_description = self._accessnode_to_innermost_edge(
+                path_description = utils.accessnode_to_innermost_edge(
                     path_desc_state, path_description)
             self._update_memlet_hbm(path_desc_state, path_description, subset_index)
 
@@ -179,5 +164,3 @@ class HbmTransform(transformation.Transformation):
 
         #nest the sdfg and execute in parallel
         self._multiply_sdfg_executions(sdfg, self.outer_map_range)
-
-

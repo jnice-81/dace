@@ -77,7 +77,6 @@ def createGemm(target : str = None):
     N = dace.symbol("N")
     M = dace.symbol("M")
     
-
     @dace.program
     def sgemmtest(A : dace.float32[M, N], B : dace.float32[N, 100], C : dace.float32[M, 100]):
         C[:] = A @ B
