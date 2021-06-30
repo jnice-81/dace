@@ -120,37 +120,37 @@ class HbmTransform(transformation.Transformation):
                     memlet=memlet.Memlet(other_node.data, subset=target_other_subset), 
                     src_conn="_out", dst_conn=path[-1].dst_conn,)
 
-    def _update_array_shape(sdfg: SDFG, array_name: str, new_shape: Iterable, total_size = None):
+    def _update_array_shape(self, sdfg: SDFG, array_name: str, new_shape: Iterable, total_size = None):
         desc = sdfg.arrays[array_name]
         sdfg.remove_data(array_name, False)
-        sdfg.add_array(array_name, new_shape, desc.dtype,
+        updated = sdfg.add_array(array_name, new_shape, desc.dtype,
                         desc.storage, 
                         desc.transient, desc.strides,
                         desc.offset, desc.lifetime, 
                         desc.debuginfo, desc.allow_conflicts,
                         total_size, False, desc.alignment, desc.may_alias, )
+        return updated[1]
 
     def _update_array_hbm(self, sdfg : SDFG):
         for array_name, bankprop in self.updated_array_list:
             desc = sdfg.arrays[array_name]
-            new_memory, new_memory_banks = utils.parse_location_bank(bankprop)
             old_memory = None
             if 'bank' in desc.location and desc.location["bank"] is not None:
-                current_memory = desc.location["bank"]
-                old_memory = utils.parse_location_bank(current_memory)[0]
-            desc.location['bank'] = bankprop
+                old_memory = utils.parse_location_bank(desc.location["bank"])[0]
+            new_memory, new_memory_banks = utils.parse_location_bank(bankprop)
             if new_memory == "HBM":
                 low, high = utils.get_multibank_ranges_from_subset(new_memory_banks, sdfg)
             else:
                 low, high = int(new_memory_banks), int(new_memory_banks)+1
             if (old_memory is None or old_memory == "DDR") and new_memory == "HBM":
-                self._update_array_shape(array_name, (high - low, *desc.shape))
+                desc = self._update_array_shape(array_name, (high - low, *desc.shape))
             elif old_memory == "HBM" and (new_memory == "DDR" or new_memory is None):
-                self._update_array_shape(array_name, *(list(desc.shape)[1:]))
+                desc = self._update_array_shape(array_name, *(list(desc.shape)[1:]))
             elif old_memory == "HBM" and new_memory == "HBM":
                 new_shape = list(desc.shape)
                 new_shape[0] = high - low
-                self._update_array_shape(array_name, new_shape)
+                desc = self._update_array_shape(sdfg, array_name, new_shape)
+            desc.location['bank'] = bankprop
             desc.storage = dtypes.StorageType.FPGA_Global
 
     @staticmethod
