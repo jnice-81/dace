@@ -14,9 +14,9 @@ from dace.sdfg.nodes import Node
 from dace.sdfg.state import SDFGState
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
-from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
+from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic, subsets, memlet
 from string import ascii_uppercase
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union, Any
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple, Union, Any
 import dace.codegen.exceptions
 
 
@@ -1144,6 +1144,45 @@ def parse_location_bank(array_or_bank: Union[dt.Array, str]) -> Tuple[str, str]:
     else:
         return None
 
+def update_path_subsets(state: SDFGState, inner_edge: MultiConnectorEdge,
+    new_subset : subsets.Subset):
+    """
+    Will take the memlet path defined by :param inner_edge:, and recreate it with
+    :param new_subset:, where :param inner_edge: has to be the innermost edge
+    """
+    mem : memlet.Memlet = inner_edge.data
+    mem.subset = new_subset
+
+    path = state.memlet_path(inner_edge)
+    src_conn = path[0].src_conn
+    dst_conn = path[-1].dst_conn
+    path_nodes = []
+    for edge in path:
+        path_nodes.append(edge.src)
+        state.remove_edge_and_connectors(edge)
+    path_nodes.append(path[-1].dst)
+
+    if src_conn is not None:
+        path[0].src.add_out_connector(src_conn)
+    if dst_conn is not None:
+        path[-1].dst.add_in_connector(dst_conn)
+
+    state.add_memlet_path(*path_nodes, memlet=mem,
+        src_conn=src_conn, dst_conn=dst_conn)
+
+def update_array_shape(sdfg: SDFG, array_name: str, new_shape: Iterable, total_size = None):
+    """
+    Updates the shape of an array
+    """
+    desc = sdfg.arrays[array_name]
+    sdfg.remove_data(array_name, False)
+    updated = sdfg.add_array(array_name, new_shape, desc.dtype,
+                    desc.storage, 
+                    desc.transient, desc.strides,
+                    desc.offset, desc.lifetime, 
+                    desc.debuginfo, desc.allow_conflicts,
+                    total_size, False, desc.alignment, desc.may_alias, )
+    return updated[1]
 
 def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
                      node: Node) -> str:

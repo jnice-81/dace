@@ -69,7 +69,7 @@ def createGemv(target : str = None):
     sdfg = sgemvtest.to_sdfg()
     sdfg.apply_fpga_transformations(False)
     expand_first_libnode(sdfg, "specialize")
-    expand_first_libnode(sdfg, "FPGA_Accumulate")
+    expand_first_libnode(sdfg, "FPGA_TilesByColumn")
     sdfg.view()
     sdfg.compile()
 
@@ -86,7 +86,7 @@ def createGemm(target : str = None):
     sdfg.apply_fpga_transformations(False)
     expand_first_libnode(sdfg, "specialize")
     expand_first_libnode(sdfg, "FPGA1DSystolic")
-  # sdfg.view()
+    sdfg.view()
     sdfg.compile()
 
 def runDot(csdfg : dace.SDFG, datasize):
@@ -99,4 +99,4 @@ def runDot(csdfg : dace.SDFG, datasize):
 
 sdfg = createDot("mycompiledstuff/")
 #sdfg = utils.load_precompiled_sdfg("mycompiledstuff")
-runDot(sdfg, 100)
+#runDot(sdfg, 100)

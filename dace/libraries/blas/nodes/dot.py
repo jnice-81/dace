@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
 from dace.sdfg import utils
 from sys import implementation
 import dace.library
@@ -9,7 +10,7 @@ from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
-from dace import data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic
+from dace import data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic, subsets
 from dace.frontend.common import op_repository as oprepo
 
 
@@ -376,6 +377,7 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, n=None, partial_width=8, param="k"):
         (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(
             parent_sdfg, parent_state)
+        #perform validation and collect infos
         if 'bank' in desc_x.location and 'bank' in desc_y.location and 'bank' in desc_res.location:
             loc1 = utils.parse_location_bank(desc_x)
             loc2 = utils.parse_location_bank(desc_y)
@@ -393,18 +395,25 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
             raise RuntimeError("The inputs for this implementation of dot must already be in HBM")
         if n is None:
             n = list(desc_x.shape)[1]
+
+        #modify the FpgaPartialSums implementation to use HBM
         sdfg = ExpandDotFpgaPartialSums.expansion(node, parent_state, parent_sdfg, n, partial_width)
         from dace.transformation.dataflow import hbm_transform
         hbm_xform = hbm_transform.HbmTransform(sdfg.sdfg_id, -1, {}, -1)
         state : SDFGState = sdfg.states()[0]
         for node in state.source_nodes():
             if node.label != "partial_sums" and node.label != "reduce":
-                hbm_xform.updated_access_list.append((state, node, "k"))
+                hbm_xform.update_hbm_access_list.append((state, node, "k"))
         hbm_xform.outer_map_range = {param:f"0:{high1 - low1}"}
-        hbm_xform.updated_array_list.append(("_x", f"hbm.{low1}:{high1}"))
-        hbm_xform.updated_array_list.append(("_y", f"hbm.{low2}:{high2}"))
-        hbm_xform.updated_array_list.append(("_result", f"ddr.{result_bank}"))
+        hbm_xform.update_array_list.append(("_x", f"hbm.{low1}:{high1}"))
+        hbm_xform.update_array_list.append(("_y", f"hbm.{low2}:{high2}"))
+        hbm_xform.update_array_list.append(("_result", f"ddr.{result_bank}"))
         hbm_xform.apply(sdfg)
+        
+
+        for node in state.sink_nodes():
+            if node.label == "_result":
+                pass
 
         return sdfg
         
