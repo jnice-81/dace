@@ -1144,16 +1144,36 @@ def parse_location_bank(array_or_bank: Union[dt.Array, str]) -> Tuple[str, str]:
     else:
         return None
 
-def update_path_subsets(state: SDFGState, inner_edge: MultiConnectorEdge,
-    new_subset : subsets.Subset):
+def accessnode_to_innermost_edge(state : SDFGState, node : nd.AccessNode):
+    """
+    Takes a node that only has one out- or ingoing edge,
+    :return: the innermost_edge on the memlet path defined by that node
+    """
+    some_edge = list(state.all_edges(node))
+    if len(some_edge) != 1:
+        raise ValueError("You may not specify an AccessNode in the update_access_list or in "
+            "update_hbm_access_list if it does not have exactly one attached memlet path")
+    some_edge = some_edge[0]
+    if some_edge.dst == node:
+        edge = state.memlet_path(some_edge)[0]
+    else:
+        edge = state.memlet_path(some_edge)[-1]
+    return edge
+
+def update_path_subsets(state: SDFGState, 
+    inner_edge_info: Union[MultiConnectorEdge, nd.AccessNode],
+    new_subset : subsets.Subset,):
     """
     Will take the memlet path defined by :param inner_edge:, and recreate it with
-    :param new_subset:, where :param inner_edge: has to be the innermost edge
+    :param new_subset:, where :param inner_edge: has to be the innermost edge.
+    If 
     """
-    mem : memlet.Memlet = inner_edge.data
+    if isinstance(inner_edge_info, nd.AccessNode):
+        inner_edge_info = accessnode_to_innermost_edge(state, inner_edge_info)
+    mem : memlet.Memlet = inner_edge_info.data
     mem.subset = new_subset
 
-    path = state.memlet_path(inner_edge)
+    path = state.memlet_path(inner_edge_info)
     src_conn = path[0].src_conn
     dst_conn = path[-1].dst_conn
     path_nodes = []
