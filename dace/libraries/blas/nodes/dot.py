@@ -404,11 +404,6 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
         hbm_xform.updated_array_list.append(("_x", f"hbm.{low1}:{high1}"))
         hbm_xform.updated_array_list.append(("_y", f"hbm.{low2}:{high2}"))
         hbm_xform.updated_array_list.append(("_result", f"ddr.{result_bank}"))
-        """
-        sdfg.arrays["_x"].storage = dtypes.StorageType.FPGA_Global
-        sdfg.arrays["_y"].storage = dtypes.StorageType.FPGA_Global
-        sdfg.arrays["_result"].storage = dtypes.StorageType.FPGA_Global
-        """
         hbm_xform.apply(sdfg)
 
         return sdfg
