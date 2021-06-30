@@ -385,6 +385,9 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
             if node.label != "partial_sums" and node.label != "reduce":
                 hbm_xform.updated_access_list.append((state, node, "k"))
         hbm_xform.outer_map_range = {"k":"0:2"}
+        sdfg.arrays["_x"].storage = dtypes.StorageType.FPGA_Global
+        sdfg.arrays["_y"].storage = dtypes.StorageType.FPGA_Global
+        sdfg.arrays["_result"].storage = dtypes.StorageType.FPGA_Global
         hbm_xform.apply(sdfg)
 
         return sdfg

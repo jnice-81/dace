@@ -45,6 +45,7 @@ def createDot(target : str = None):
 
     sdfg.arrays["in1"].location["bank"] = "hbm.0:2"
     sdfg.arrays["in2"].location["bank"] = "hbm.2:4"
+    sdfg.arrays["out"].location["bank"] = "ddr.0"
     for node in sdfg.states()[0].nodes():
         if isinstance(node, nd.AccessNode) and node.label != "out":
             edge = sdfg.states()[0].out_edges(node)[0]
