@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+from dace.sdfg import utils
 from sys import implementation
 import dace.library
 import dace.properties
@@ -372,9 +373,24 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, partial_width=8):
+    def expansion(node, parent_state, parent_sdfg, n=None, partial_width=8, param="k"):
         (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(
             parent_sdfg, parent_state)
+        if 'bank' in desc_x.location and 'bank' in desc_y.location and 'bank' in desc_res.location:
+            loc1 = utils.parse_location_bank(desc_x)
+            loc2 = utils.parse_location_bank(desc_y)
+            if loc1[0] != "HBM" or loc2[0] != "HBM":
+                raise NotImplementedError("This implementation of dot only supports HBM inputs")
+            low1, high1 = utils.get_multibank_ranges_from_subset(loc1[1], parent_sdfg)
+            low2, high2 = utils.get_multibank_ranges_from_subset(loc2[1], parent_sdfg)
+            loc3 = utils.parse_location_bank(desc_res)
+            if loc3[0] != "DDR":
+                raise RuntimeError("Output array must be on DDR")
+            result_bank = int(loc3[1])
+            if(high1 - low1 != high2 - low2):
+                raise RuntimeError("The both input arrays need to span across the same number of banks")
+        else:
+            raise RuntimeError("The inputs for this implementation of dot must already be in HBM")
         if n is None:
             n = list(desc_x.shape)[1]
         sdfg = ExpandDotFpgaPartialSums.expansion(node, parent_state, parent_sdfg, n, partial_width)
@@ -384,10 +400,15 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
         for node in state.source_nodes():
             if node.label != "partial_sums" and node.label != "reduce":
                 hbm_xform.updated_access_list.append((state, node, "k"))
-        hbm_xform.outer_map_range = {"k":"0:2"}
+        hbm_xform.outer_map_range = {param:f"0:{high1 - low1}"}
+        hbm_xform.updated_array_list.append(("_x", f"hbm.{low1}:{high1}"))
+        hbm_xform.updated_array_list.append(("_y", f"hbm.{low2}:{high2}"))
+        hbm_xform.updated_array_list.append(("_result", f"ddr.{result_bank}"))
+        """
         sdfg.arrays["_x"].storage = dtypes.StorageType.FPGA_Global
         sdfg.arrays["_y"].storage = dtypes.StorageType.FPGA_Global
         sdfg.arrays["_result"].storage = dtypes.StorageType.FPGA_Global
+        """
         hbm_xform.apply(sdfg)
 
         return sdfg

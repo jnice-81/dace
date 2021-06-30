@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, Iterable, List, Tuple, Union
 
 import networkx
 from dace import dtypes, properties, registry, subsets, symbolic
@@ -24,13 +24,14 @@ class HbmTransform(transformation.Transformation):
     updated_array_list = properties.Property(
         dtype=List,
         default=[],
-        desc="List of (arrayname, new value for location['bank']). Will also update the shape of the array."
+        desc="List of (arrayname, new value for location['bank']). For HBM arrays will update "
+        "the shape of the array, if not already on HBM. Will move the array to FPGA_Global."
     )
 
     outer_map_range = properties.Property(
         dtype=Dict,
         default={"k" : "0"},
-        desc="Stores the range for the outer HBM map. defaults to k = 0."
+        desc="Stores the range for the outer HBM map. Defaults to k = 0."
     )
 
     def _multiply_sdfg_executions(self, sdfg : SDFG, 
@@ -48,7 +49,6 @@ class HbmTransform(transformation.Transformation):
                 if e.src.label == "_x" or e.src.label == "_y":
                     k = symbolic.pystr_to_symbolic("k")
                     e.data.subset[0] = (k, k, 1)
-        #sdfg.view()
         
         map_enter, map_exit = state.add_map("hbm_unrolled_map", unrollparams, 
             dtypes.ScheduleType.Unrolled)
@@ -120,7 +120,39 @@ class HbmTransform(transformation.Transformation):
                     memlet=memlet.Memlet(other_node.data, subset=target_other_subset), 
                     src_conn="_out", dst_conn=path[-1].dst_conn,)
 
-        
+    def _update_array_shape(sdfg: SDFG, array_name: str, new_shape: Iterable, total_size = None):
+        desc = sdfg.arrays[array_name]
+        sdfg.remove_data(array_name, False)
+        sdfg.add_array(array_name, new_shape, desc.dtype,
+                        desc.storage, 
+                        desc.transient, desc.strides,
+                        desc.offset, desc.lifetime, 
+                        desc.debuginfo, desc.allow_conflicts,
+                        total_size, False, desc.alignment, desc.may_alias, )
+
+    def _update_array_hbm(self, sdfg : SDFG):
+        for array_name, bankprop in self.updated_array_list:
+            desc = sdfg.arrays[array_name]
+            new_memory, new_memory_banks = utils.parse_location_bank(bankprop)
+            old_memory = None
+            if 'bank' in desc.location and desc.location["bank"] is not None:
+                current_memory = desc.location["bank"]
+                old_memory = utils.parse_location_bank(current_memory)[0]
+            desc.location['bank'] = bankprop
+            if new_memory == "HBM":
+                low, high = utils.get_multibank_ranges_from_subset(new_memory_banks, sdfg)
+            else:
+                low, high = int(new_memory_banks), int(new_memory_banks)+1
+            if (old_memory is None or old_memory == "DDR") and new_memory == "HBM":
+                self._update_array_shape(array_name, (high - low, *desc.shape))
+            elif old_memory == "HBM" and (new_memory == "DDR" or new_memory is None):
+                self._update_array_shape(array_name, *(list(desc.shape)[1:]))
+            elif old_memory == "HBM" and new_memory == "HBM":
+                new_shape = list(desc.shape)
+                new_shape[0] = high - low
+                self._update_array_shape(array_name, new_shape)
+            desc.storage = dtypes.StorageType.FPGA_Global
+
     @staticmethod
     def can_be_applied(self, graph: Union[SDFG, SDFGState], candidate: Dict['PatternNode', int],
         expr_index: int, sdfg: SDFG, strict: bool) -> bool:
@@ -137,7 +169,7 @@ class HbmTransform(transformation.Transformation):
                 some_edge = list(path_desc_state.all_edges(path_description))
                 if len(some_edge) != 1:
                     raise ValueError("You may not specify an AccessNode in the update_access_list "
-                        " if it does not have exactly one attached edge")
+                        " if it does not have exactly one attached memlet path")
                 some_edge = some_edge[0]
                 if some_edge.dst == path_description:
                     path_description = path_desc_state.memlet_path(some_edge)[0]
@@ -146,15 +178,7 @@ class HbmTransform(transformation.Transformation):
             
             self._update_memlet_hbm(path_desc_state, path_description, subset_index)
 
-        for array_name, bankprop in self.updated_array_list:
-            desc = sdfg.arrays[array_name]
-            desc.location['bank'] = bankprop
-            tmp = utils.parse_location_bank(desc)
-            if tmp is None:
-                raise ValueError(f"Could not parse {bankprop} in property updated_array_list")
-            low, high = utils.get_multibank_ranges_from_subset(tmp[1], sdfg)
-            desc.shape = (high - low, *desc.shape)
-   
+        self._update_array_hbm(sdfg)
         self._multiply_sdfg_executions(sdfg, self.outer_map_range)
 
 
