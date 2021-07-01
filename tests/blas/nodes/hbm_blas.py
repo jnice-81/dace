@@ -1,4 +1,5 @@
-from dace import subsets
+from dace.sdfg.state import SDFGState
+from dace import dtypes, subsets, memlet
 from dace.transformation import dataflow
 from dace.transformation.dataflow import hbm_copy_transform
 from typing import Iterable
@@ -23,6 +24,18 @@ def expand_first_libnode(sdfg: dace.SDFG, impl: str, dryExpand: bool=False,
             expandlibnode(state.parent, state, node, impl, dryExpand, *args, **kwargs)
             return
 
+def create_hbm_access(state: SDFGState, name, locstr, shape, lib_node,
+    lib_conn, is_write, mem_str, dtype=dace.float32):
+    state.parent.add_array(name, shape, dtype)
+    state.parent.arrays[name].location["bank"] = locstr
+    access = state.add_access(name)
+    if is_write:
+        state.add_edge(lib_node, lib_conn, access, None,
+            memlet.Memlet(mem_str))
+    else:
+        state.add_edge(access, None, lib_node, lib_conn, 
+            memlet.Memlet(mem_str))
+
 def random_array(size, type = np.float32):
     if not isinstance(size, Iterable):
         size = (size,)
@@ -34,37 +47,28 @@ def random_array(size, type = np.float32):
 def createDot(target : str = None):
     N = dace.symbol("N")
 
-    @dace.program
-    def sdottest(in1 : dace.float32[N], in2 : dace.float32[N], out : dace.float32[1]):
-        np.dot(in1, in2, out)
-    sdfg = sdottest.to_sdfg()
+    sdfg = SDFG("hbm_dot")
+    state = sdfg.add_state("sdot")
+    dot_node = blas.Dot("sdot_node")
+    dot_node.implementation = "FPGA_HBM_PartialSums"
+    create_hbm_access(state, "in1", "hbm.0:2", [2, N], 
+        dot_node, "_x", False, "in1")
+    create_hbm_access(state, "in2", "hbm.2:4", [2, N],
+        dot_node, "_y", False, "in2")
+    create_hbm_access(state, "out", "ddr.0", [1],
+        dot_node, "_result", True, "out")
+    sdfg.expand_library_nodes()
 
-    tmpold = sdfg.arrays["in1"]
-    sdfg.remove_data("in1", False)
-    sdfg.add_array("in1", (2, N), tmpold.dtype)
-    tmpold = sdfg.arrays["in2"]
-    sdfg.remove_data("in2", False)
-    sdfg.add_array("in2", (2, N), tmpold.dtype)
-
-    sdfg.arrays["in1"].location["bank"] = "hbm.0:2"
-    sdfg.arrays["in2"].location["bank"] = "hbm.2:4"
-    sdfg.arrays["out"].location["bank"] = "ddr.0"
-    for node in sdfg.states()[0].nodes():
-        if isinstance(node, nd.AccessNode) and node.label != "out":
-            edge = sdfg.states()[0].out_edges(node)[0]
-            edge.data.subset = subsets.Range.from_string("0:2, 0:N")
-    #sdfg.view()
-    
-    expand_first_libnode(sdfg, "FPGA_HBM_PartialSums")
     sdfg.apply_fpga_transformations(False, validate=False)
 
     utils.update_array_shape(sdfg, "in1", [2*N])
     utils.update_array_shape(sdfg, "in2", [2*N])
+    sdfg.arrays["in1"].storage = dtypes.StorageType.CPU_Heap
+    sdfg.arrays["in2"].storage = dtypes.StorageType.CPU_Heap
     for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
         patterns=[hbm_copy_transform.HbmCopyTransform]):
         xform.apply(sdfg)
     
-    sdfg.view()
     sdfg.compile(target)
     return sdfg
 
