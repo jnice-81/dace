@@ -39,9 +39,9 @@ def create_hbm_access(state: SDFGState, name, locstr, shape, lib_node,
 def random_array(size, type = np.float32):
     if not isinstance(size, Iterable):
         size = (size,)
-    a = np.random.rand(*size)
-    a = a.astype(type)
-    print(a.dtype)
+    #a = np.random.rand(*size)
+    #a = a.astype(type)
+    a = np.ones(size, type)
     return a
 
 def createDot(target : str = None):
@@ -57,7 +57,7 @@ def createDot(target : str = None):
         dot_node, "_y", False, "in2")
     create_hbm_access(state, "out", "ddr.0", [1],
         dot_node, "_result", True, "out")
-    sdfg.expand_library_nodes()
+    dot_node.expand(sdfg, state, partial_width=16)
 
     sdfg.apply_fpga_transformations(False, validate=False)
 
@@ -84,7 +84,6 @@ def createGemv(target : str = None):
     sdfg.apply_fpga_transformations(False)
     expand_first_libnode(sdfg, "specialize")
     expand_first_libnode(sdfg, "FPGA_TilesByColumn")
-    sdfg.view()
     sdfg.compile()
 
 def createGemm(target : str = None):
@@ -99,17 +98,18 @@ def createGemm(target : str = None):
     sdfg.apply_fpga_transformations(False)
     expand_first_libnode(sdfg, "specialize")
     expand_first_libnode(sdfg, "FPGA1DSystolic")
-    sdfg.view()
     sdfg.compile()
 
-def runDot(csdfg : dace.SDFG, datasize):
-    x = random_array(datasize)
-    y = random_array(datasize)
+def runDot(csdfg : dace.SDFG, data_size: int):
+    x = random_array(data_size)
+    y = random_array(data_size)
     result = random_array(1)
     check = np.dot(x, y)
-    csdfg(in1=x, in2=y, out=result, N=datasize)
+    csdfg(in1=x, in2=y, out=result, N=data_size)
+    print(result)
+    print(check)
     assert np.allclose(result, check)
 
-sdfg = createDot("mycompiledstuff/")
+csdfg = createDot("mycompiledstuff/")
+runDot(csdfg, 300)
 #sdfg = utils.load_precompiled_sdfg("mycompiledstuff")
-#runDot(sdfg, 100)

@@ -432,7 +432,7 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
         result_write = state.add_write("_result")
         map_entry, map_exit = state.add_map("final_reduce", {"k":f"1:{high1-low1}"})
         tasklet = state.add_tasklet("reduce", set(["_fixed", "_in"]), set(["_out"]), 
-        "_out = _out + _in")
+        "_out = _fixed + _in")
         state.add_memlet_path(reduce_read, map_entry, tasklet, 
             memlet=mm.Memlet("reduce[0]"), dst_conn="_fixed")
         state.add_memlet_path(reduce_read, map_entry, tasklet, 
