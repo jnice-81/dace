@@ -1190,7 +1190,8 @@ def update_path_subsets(state: SDFGState,
     state.add_memlet_path(*path_nodes, memlet=mem,
         src_conn=src_conn, dst_conn=dst_conn)
 
-def update_array_shape(sdfg: SDFG, array_name: str, new_shape: Iterable, total_size = None):
+def update_array_shape(sdfg: SDFG, array_name: str, new_shape: Iterable, 
+    strides=None, offset=None, total_size=None):
     """
     Updates the shape of an array
     """
@@ -1198,8 +1199,8 @@ def update_array_shape(sdfg: SDFG, array_name: str, new_shape: Iterable, total_s
     sdfg.remove_data(array_name, False)
     updated = sdfg.add_array(array_name, new_shape, desc.dtype,
                     desc.storage, 
-                    desc.transient, desc.strides,
-                    desc.offset, desc.lifetime, 
+                    desc.transient, strides,
+                    offset, desc.lifetime, 
                     desc.debuginfo, desc.allow_conflicts,
                     total_size, False, desc.alignment, desc.may_alias, )
     return updated[1]

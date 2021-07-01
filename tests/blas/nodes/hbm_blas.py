@@ -1,4 +1,6 @@
 from dace import subsets
+from dace.transformation import dataflow
+from dace.transformation.dataflow import hbm_copy_transform
 from typing import Iterable
 from dace.sdfg import utils
 from dace.sdfg.sdfg import SDFG
@@ -6,6 +8,7 @@ import dace
 import dace.libraries.blas.nodes as blas
 import numpy as np
 import dace.sdfg.nodes as nd
+from dace.transformation import optimizer
 
 def expandlibnode(sdfg: dace.SDFG, state: dace.SDFGState, 
     node: nd.LibraryNode, impl: str, dryExpand: bool = False, *args, **kwargs):
@@ -54,6 +57,13 @@ def createDot(target : str = None):
     
     expand_first_libnode(sdfg, "FPGA_HBM_PartialSums")
     sdfg.apply_fpga_transformations(False, validate=False)
+
+    utils.update_array_shape(sdfg, "in1", [2*N])
+    utils.update_array_shape(sdfg, "in2", [2*N])
+    for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
+        patterns=[hbm_copy_transform.HbmCopyTransform]):
+        xform.apply(sdfg)
+    
     sdfg.view()
     sdfg.compile(target)
     return sdfg

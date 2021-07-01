@@ -4,7 +4,7 @@ import networkx
 from dace import dtypes, properties, registry, subsets, symbolic
 from dace.sdfg import utils, graph
 from dace.transformation import transformation, interstate
-from dace.sdfg import scope, nodes as nd
+from dace.sdfg import nodes as nd
 from dace import SDFG, SDFGState, memlet
 
 @registry.autoregister
