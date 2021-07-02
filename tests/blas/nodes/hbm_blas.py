@@ -55,7 +55,7 @@ def createDot(target : str = None):
         dot_node, "_x", False, "in1")
     create_hbm_access(state, "in2", "hbm.2:4", [2, N],
         dot_node, "_y", False, "in2")
-    create_hbm_access(state, "out", "ddr.0", [1],
+    create_hbm_access(state, "out", "ddr.0", [2],
         dot_node, "_result", True, "out")
     dot_node.expand(sdfg, state, partial_width=8)
 
@@ -68,7 +68,8 @@ def createDot(target : str = None):
     for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
         patterns=[hbm_copy_transform.HbmCopyTransform]):
         xform.apply(sdfg)
-    
+   
+    sdfg.view()
     sdfg.compile(target)
     return sdfg
 
