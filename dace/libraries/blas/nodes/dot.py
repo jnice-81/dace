@@ -408,6 +408,10 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
             if node.label == 'reduce':
                 utils.update_path_subsets(state, node, 
                     subsets.Range.from_string("k"))
+        for node in state.source_nodes():
+            if node.label == 'reduce':
+                utils.update_path_subsets(state, node, 
+                    subsets.Range.from_string("k"))
         sdfg.arrays.pop("_result")
         utils.update_array_shape(sdfg, "reduce", [high1-low1])
         sdfg.arrays["reduce"].transient = False
