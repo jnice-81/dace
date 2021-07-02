@@ -36,41 +36,54 @@ def create_hbm_access(state: SDFGState, name, locstr, shape, lib_node,
         state.add_edge(access, None, lib_node, lib_conn, 
             memlet.Memlet(mem_str))
 
-def random_array(size, type = np.float32):
+def random_array(size, type = np.float32, fix_constant = None):
     if not isinstance(size, Iterable):
         size = (size,)
-    #a = np.random.rand(*size)
-    #a = a.astype(type)
-    a = np.ones(size, type)
+    if fix_constant is None:
+        a = np.random.rand(*size)
+        a = a.astype(type)
+    else:
+        a = np.ones(size, type) * fix_constant
     return a
 
-def createDot(target : str = None):
+def exec_dot_hbm(data_size_per_bank: int, banks_per_input: int, load_from=None):
     N = dace.symbol("N")
 
-    sdfg = SDFG("hbm_dot")
-    state = sdfg.add_state("sdot")
-    dot_node = blas.Dot("sdot_node")
-    dot_node.implementation = "FPGA_HBM_PartialSums"
-    create_hbm_access(state, "in1", "hbm.0:2", [2, N], 
-        dot_node, "_x", False, "in1")
-    create_hbm_access(state, "in2", "hbm.2:4", [2, N],
-        dot_node, "_y", False, "in2")
-    create_hbm_access(state, "out", "ddr.0", [2],
-        dot_node, "_result", True, "out")
-    dot_node.expand(sdfg, state, partial_width=8)
+    if load_from is None:
+        sdfg = SDFG("hbm_dot")
+        state = sdfg.add_state("sdot")
+        dot_node = blas.Dot("sdot_node")
+        dot_node.implementation = "FPGA_HBM_PartialSums"
+        create_hbm_access(state, "in1", f"hbm.0:{banks_per_input}", 
+            [banks_per_input, N], dot_node, "_x", False, "in1")
+        create_hbm_access(state, "in2", f"hbm.{banks_per_input}:{2*banks_per_input}",
+            [banks_per_input, N], dot_node, "_y", False, "in2")
+        create_hbm_access(state, "out", "ddr.0", [1],
+            dot_node, "_result", True, "out")
+        dot_node.expand(sdfg, state, partial_width=16)
 
-    sdfg.apply_fpga_transformations(False, validate=False)
+        sdfg.apply_fpga_transformations(False, validate=False)
 
-    utils.update_array_shape(sdfg, "in1", [2*N])
-    utils.update_array_shape(sdfg, "in2", [2*N])
-    sdfg.arrays["in1"].storage = dtypes.StorageType.CPU_Heap
-    sdfg.arrays["in2"].storage = dtypes.StorageType.CPU_Heap
-    for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
-        patterns=[hbm_copy_transform.HbmCopyTransform]):
-        xform.apply(sdfg)
-   
-    sdfg.compile(target)
-    return sdfg
+        utils.update_array_shape(sdfg, "in1", [banks_per_input*N])
+        utils.update_array_shape(sdfg, "in2", [banks_per_input*N])
+        sdfg.arrays["in1"].storage = dtypes.StorageType.CPU_Heap
+        sdfg.arrays["in2"].storage = dtypes.StorageType.CPU_Heap
+        for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
+            patterns=[hbm_copy_transform.HbmCopyTransform]):
+            xform.apply(sdfg)
+    
+        sdfg.compile()
+    else:
+        sdfg = utils.load_precompiled_sdfg(load_from)
+    
+    x = random_array(data_size_per_bank*banks_per_input, fix_constant=1)
+    y = random_array(data_size_per_bank*banks_per_input, fix_constant=1)
+    result = np.zeros(1, dtype=np.float32)
+    check = np.dot(x, y)
+    sdfg(in1=x, in2=y, out=result, N=data_size_per_bank)
+    print(check)
+    print(result)
+    assert np.allclose(result, check)
 
 def createGemv(target : str = None):
     N = dace.symbol("N")
@@ -99,19 +112,6 @@ def createGemm(target : str = None):
     expand_first_libnode(sdfg, "specialize")
     expand_first_libnode(sdfg, "FPGA1DSystolic")
     sdfg.compile()
-
-def runDot(csdfg : dace.SDFG, data_size: int):
-    x = random_array(data_size)
-    y = random_array(data_size)
-    #result = random_array(2)
-    result = np.zeros(2, dtype=np.float32)
-    check = np.dot(x, y)
-    size_per_bank = data_size // 2
-    csdfg(in1=x, in2=y, out=result, N=size_per_bank)
-    print(result)
-    print(check)
-    assert np.allclose(result, check)
-
-csdfg = createDot("mycompiledstuff/")
-runDot(csdfg, 30)
+    
+exec_dot_hbm(1000, 16)
 #sdfg = utils.load_precompiled_sdfg("mycompiledstuff")

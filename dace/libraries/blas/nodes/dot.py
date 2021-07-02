@@ -428,6 +428,7 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
         sdfg.sdfg_list[1].arrays["__reduce_in"].may_alias = True
         sdfg.sdfg_list[1].arrays["__reduce_out"].may_alias = True
 
+        """
         state: SDFGState = sdfg.states()[0]
         reduce_read = list(state.sink_nodes())[0]
         sdfg.add_array("_result", [2], desc_x.dtype, 
@@ -456,7 +457,6 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
             memlet=mm.Memlet("reduce[0]"), src_conn="_out")
         state.add_memlet_path(reduce_write, result_write, 
             memlet=mm.Memlet("reduce[0]"))
-        """
 
         return sdfg
         
@@ -688,7 +688,6 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         sqdims1 = squeezed1.squeeze()
         sqdims2 = squeezed2.squeeze()
         
-        """
         if self.implementation == "FPGA_HBM_PartialSums":
             if len(squeezed1.size()) != 2 or len(squeezed2.size()) != 2:
                 raise ValueError("This implementation of dot product needs 2-dimensional arrays")
@@ -697,7 +696,6 @@ class Dot(dace.sdfg.nodes.LibraryNode):
                 "dot product only supported on 1-dimensional arrays")
         if out_memlet.subset.num_elements() != 1:
             raise ValueError("Output of dot product must be a single element")
-        """
 
         desc_x, desc_y, desc_res = None, None, None
         for e in state.in_edges(self):
