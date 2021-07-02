@@ -55,9 +55,9 @@ def exec_dot_hbm(data_size_per_bank: int, banks_per_input: int, load_from=None):
         dot_node = blas.Dot("sdot_node")
         dot_node.implementation = "FPGA_HBM_PartialSums"
         create_hbm_access(state, "in1", f"hbm.0:{banks_per_input}", 
-            [banks_per_input, N], dot_node, "_x", False, "in1", dace.vector(dace.float32, 6))
+            [banks_per_input, N], dot_node, "_x", False, "in1")
         create_hbm_access(state, "in2", f"hbm.{banks_per_input}:{2*banks_per_input}",
-            [banks_per_input, N], dot_node, "_y", False, "in2", dace.vector(dace.float32, 6))
+            [banks_per_input, N], dot_node, "_y", False, "in2")
         create_hbm_access(state, "out", "ddr.0", [1],
             dot_node, "_result", True, "out", dace.float32)
         dot_node.expand(sdfg, state, partial_width=16)
