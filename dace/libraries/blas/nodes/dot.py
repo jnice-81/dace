@@ -421,7 +421,18 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
         hbm_xform.update_array_list.append(("_x", f"hbm.{low1}:{high1}"))
         hbm_xform.update_array_list.append(("_y", f"hbm.{low2}:{high2}"))
         hbm_xform.apply(sdfg)
+        sdfg.sdfg_list[1].arrays["__reduce_in"].may_alias = True
+        sdfg.sdfg_list[1].arrays["__reduce_out"].may_alias = True
 
+        state: SDFGState = sdfg.states()[0]
+        reduce_read = list(state.sink_nodes())[0]
+        sdfg.add_array("_result", [2], desc_x.dtype, 
+            dtypes.StorageType.FPGA_Global)
+        sdfg.arrays["reduce"].transient = True
+        result_write = state.add_write("_result")
+        state.add_memlet_path(reduce_read, result_write,
+            memlet=mm.Memlet("reduce"))
+        """
         state: SDFGState = sdfg.states()[0]
         sdfg.arrays["reduce"].transient = True
         sdfg.add_array("_result", [1], desc_x.dtype, 
@@ -441,6 +452,7 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
             memlet=mm.Memlet("reduce[0]"), src_conn="_out")
         state.add_memlet_path(reduce_write, result_write, 
             memlet=mm.Memlet("reduce[0]"))
+        """
 
         return sdfg
         

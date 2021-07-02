@@ -57,7 +57,7 @@ def createDot(target : str = None):
         dot_node, "_y", False, "in2")
     create_hbm_access(state, "out", "ddr.0", [1],
         dot_node, "_result", True, "out")
-    dot_node.expand(sdfg, state, partial_width=16)
+    dot_node.expand(sdfg, state, partial_width=8)
 
     sdfg.apply_fpga_transformations(False, validate=False)
 
@@ -69,7 +69,6 @@ def createDot(target : str = None):
         patterns=[hbm_copy_transform.HbmCopyTransform]):
         xform.apply(sdfg)
     
-    sdfg.view()
     sdfg.compile(target)
     return sdfg
 
@@ -104,13 +103,15 @@ def createGemm(target : str = None):
 def runDot(csdfg : dace.SDFG, data_size: int):
     x = random_array(data_size)
     y = random_array(data_size)
-    result = random_array(1)
+    #result = random_array(2)
+    result = np.zeros(2, dtype=np.float32)
     check = np.dot(x, y)
-    csdfg(in1=x, in2=y, out=result, N=data_size)
+    size_per_bank = data_size // 2
+    csdfg(in1=x, in2=y, out=result, N=size_per_bank)
     print(result)
     print(check)
     assert np.allclose(result, check)
 
 csdfg = createDot("mycompiledstuff/")
-runDot(csdfg, 300)
+runDot(csdfg, 30)
 #sdfg = utils.load_precompiled_sdfg("mycompiledstuff")
