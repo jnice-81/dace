@@ -69,6 +69,7 @@ def createDot(target : str = None):
         patterns=[hbm_copy_transform.HbmCopyTransform]):
         xform.apply(sdfg)
     
+    sdfg.view()
     sdfg.compile(target)
     return sdfg
 
