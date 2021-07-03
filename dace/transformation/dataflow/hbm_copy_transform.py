@@ -56,10 +56,10 @@ class HbmCopyTransform(transformation.Transformation):
 
         #same dimensions means HBM-array needs 1 dimension more
         if src_type == "HBM":
-            if len(src_array.shape) != len(dst_array.shape) - 1:
+            if len(src_array.shape) - 1 != len(dst_array.shape):
                 return False
         else:
-            if len(dst_array.shape) != len(src_array.shape) + 1:
+            if len(src_array.shape) + 1 != len(dst_array.shape):
                 return False
         
         return True
