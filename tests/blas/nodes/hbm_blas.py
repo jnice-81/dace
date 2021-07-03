@@ -11,6 +11,9 @@ import numpy as np
 import dace.sdfg.nodes as nd
 from dace.transformation import optimizer
 
+################
+# Helpers
+
 def expandlibnode(sdfg: dace.SDFG, state: dace.SDFGState, 
     node: nd.LibraryNode, impl: str, dryExpand: bool = False, *args, **kwargs):
     node.implementation = impl
@@ -46,10 +49,22 @@ def random_array(size, type = np.float32, fix_constant = None):
         a = np.ones(size, type) * fix_constant
     return a
 
-def exec_dot_hbm(data_size_per_bank: int, banks_per_input: int, load_from=None):
-    N = dace.symbol("N")
-
+def create_or_load(load_from, create_method, compile=True):
     if load_from is None:
+        sdfg = create_method()
+        if compile:
+            sdfg.compile()
+    else:
+        sdfg = utils.load_precompiled_sdfg(load_from)
+    return sdfg
+
+################
+# Execution methods
+
+def exec_dot_hbm(data_size_per_bank: int, banks_per_input: int, load_from=None):
+    def create_dot_sdfg():
+        N = dace.symbol("N")
+
         sdfg = SDFG("hbm_dot")
         state = sdfg.add_state("sdot")
         dot_node = blas.Dot("sdot_node")
@@ -71,10 +86,10 @@ def exec_dot_hbm(data_size_per_bank: int, banks_per_input: int, load_from=None):
         for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
             patterns=[hbm_copy_transform.HbmCopyTransform]):
             xform.apply(sdfg)
-    
-        sdfg.compile()
-    else:
-        sdfg = utils.load_precompiled_sdfg(load_from)
+
+        return sdfg
+
+    sdfg = create_or_load(load_from, create_dot_sdfg)
     
     x = random_array(data_size_per_bank*banks_per_input, fix_constant=1)
     y = random_array(data_size_per_bank*banks_per_input, fix_constant=1)
@@ -84,6 +99,36 @@ def exec_dot_hbm(data_size_per_bank: int, banks_per_input: int, load_from=None):
     print(check)
     print(result)
     assert np.allclose(result, check)
+
+def exec_axpy(data_size_per_bank: int, banks_per_array: int, load_from=None):
+    N = dace.symbol("N")
+
+    def create_axpy_sdfg():
+        sdfg = SDFG("hbm_axpy")
+        state = sdfg.add_state("axpy")
+        axpy_node = blas.Axpy("saxpy_node")
+        axpy_node.implementation = "fpga_hbm"
+        create_hbm_access(state, "in1", f"hbm.0:{banks_per_array}", 
+            [banks_per_array, N], axpy_node, "_x", False, "in1")
+        create_hbm_access(state, "in2", f"hbm.{banks_per_array}:{2*banks_per_array}",
+            [banks_per_array, N], axpy_node, "_y", False, "in2")
+        create_hbm_access(state, "out", f"hbm.{2*banks_per_array}:{3*banks_per_array}",
+            [banks_per_array, N], axpy_node, "_res", True, "out")
+        axpy_node.expand(sdfg, state)
+
+        sdfg.apply_fpga_transformations(False)
+        utils.update_array_shape(sdfg, "in1", [banks_per_array*N])
+        utils.update_array_shape(sdfg, "in2", [banks_per_array*N])
+        utils.update_array_shape(sdfg, "out", [banks_per_array*N])
+        for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
+            patterns=[hbm_copy_transform.HbmCopyTransform]):
+            xform.apply(sdfg)
+
+        return sdfg
+
+    sdfg = create_or_load(load_from, create_axpy_sdfg, False)
+    sdfg.view()
+
 
 def createGemv(target : str = None):
     N = dace.symbol("N")
@@ -113,5 +158,6 @@ def createGemm(target : str = None):
     expand_first_libnode(sdfg, "FPGA1DSystolic")
     sdfg.compile()
     
-exec_dot_hbm(1000, 16)
+#exec_dot_hbm(1000, 16)
 #sdfg = utils.load_precompiled_sdfg("mycompiledstuff")
+exec_axpy(10, 2)

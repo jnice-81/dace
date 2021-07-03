@@ -387,12 +387,12 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
             low2, high2 = utils.get_multibank_ranges_from_subset(loc2[1], parent_sdfg)
             loc3 = utils.parse_location_bank(desc_res)
             if loc3[0] != "DDR":
-                raise RuntimeError("Output array must be on DDR")
+                raise ValueError("Output array must be on DDR")
             result_bank = int(loc3[1])
             if(high1 - low1 != high2 - low2):
-                raise RuntimeError("The both input arrays need to span across the same number of banks")
+                raise ValueError("The both input arrays need to span across the same number of banks")
         else:
-            raise RuntimeError("The inputs for this implementation of dot must already be in HBM")
+            raise ValueError("The inputs for this implementation of dot must already be in HBM")
         if n is None:
             n = list(desc_x.shape)[1]
 
