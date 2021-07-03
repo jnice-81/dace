@@ -101,10 +101,11 @@ def exec_dot_hbm(data_size_per_bank: int, banks_per_input: int, load_from=None):
     assert np.allclose(result, check)
 
 def exec_axpy(data_size_per_bank: int, banks_per_array: int, load_from=None):
-    N = dace.symbol("n")
-
     def create_axpy_sdfg():
+        N = dace.symbol("n")
+
         sdfg = SDFG("hbm_axpy")
+        sdfg.add_symbol("a", dace.float32)
         state = sdfg.add_state("axpy")
         axpy_node = blas.Axpy("saxpy_node")
         axpy_node.implementation = "fpga_hbm"
