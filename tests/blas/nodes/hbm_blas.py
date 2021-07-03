@@ -101,7 +101,7 @@ def exec_dot_hbm(data_size_per_bank: int, banks_per_input: int, load_from=None):
     assert np.allclose(result, check)
 
 def exec_axpy(data_size_per_bank: int, banks_per_array: int, load_from=None):
-    N = dace.symbol("N")
+    N = dace.symbol("n")
 
     def create_axpy_sdfg():
         sdfg = SDFG("hbm_axpy")
@@ -120,14 +120,23 @@ def exec_axpy(data_size_per_bank: int, banks_per_array: int, load_from=None):
         utils.update_array_shape(sdfg, "in1", [banks_per_array*N])
         utils.update_array_shape(sdfg, "in2", [banks_per_array*N])
         utils.update_array_shape(sdfg, "out", [banks_per_array*N])
+        sdfg.arrays["in1"].storage = dtypes.StorageType.CPU_Heap
+        sdfg.arrays["in2"].storage = dtypes.StorageType.CPU_Heap
+        sdfg.arrays["out"].storage = dtypes.StorageType.CPU_Heap
         for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
             patterns=[hbm_copy_transform.HbmCopyTransform]):
             xform.apply(sdfg)
 
         return sdfg
 
-    sdfg = create_or_load(load_from, create_axpy_sdfg, False)
-    sdfg.view()
+    sdfg = create_or_load(load_from, create_axpy_sdfg)
+    x = random_array(data_size_per_bank*banks_per_array, fix_constant=1)
+    y = random_array(data_size_per_bank*banks_per_array, fix_constant=1)
+    alpha = random_array(1, fix_constant=2)
+    result = np.zeros(data_size_per_bank*banks_per_array, dtype=np.float32)
+    check = alpha[0] * x + y
+    sdfg(in1=x, in2=y, out=result, a=alpha[0], n=data_size_per_bank)
+    assert np.allclose(result, check)
 
 
 def createGemv(target : str = None):
@@ -158,6 +167,6 @@ def createGemm(target : str = None):
     expand_first_libnode(sdfg, "FPGA1DSystolic")
     sdfg.compile()
     
-#exec_dot_hbm(1000, 16)
+#exec_dot_hbm(1000, 8)
 #sdfg = utils.load_precompiled_sdfg("mycompiledstuff")
 exec_axpy(10, 2)
