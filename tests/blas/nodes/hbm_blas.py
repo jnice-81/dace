@@ -27,15 +27,6 @@ def expand_first_libnode(sdfg: dace.SDFG, impl: str, dryExpand: bool=False,
             expandlibnode(state.parent, state, node, impl, dryExpand, *args, **kwargs)
             return
 
-def kill_symbol(sdfg, name, new_type):
-    if name in sdfg.symbols:
-        sdfg.remove_symbol(name)
-        sdfg.add_symbol(name, new_type)
-    for state in sdfg.states():
-        for n in state.nodes():
-            if isinstance(n, nd.NestedSDFG):
-                kill_symbol(n.sdfg, name, new_type)
-
 def create_hbm_access(state: SDFGState, name, locstr, shape, lib_node,
     lib_conn, is_write, mem_str, dtype=dace.float32):
     state.parent.add_array(name, shape, dtype)
@@ -66,6 +57,16 @@ def create_or_load(load_from, create_method, compile=True):
     else:
         sdfg = utils.load_precompiled_sdfg(load_from)
     return sdfg
+
+def on_nested_sdfgs(sdfg : SDFG, action):
+    if sdfg.parent_nsdfg_node is not None:
+        action(sdfg, sdfg.parent_nsdfg_node)
+    else:
+        action(sdfg, None)
+    for state in sdfg.states():
+        for n in state.nodes():
+            if isinstance(n, nd.NestedSDFG):
+                on_nested_sdfgs(n.sdfg)
 
 ################
 # Execution methods
@@ -125,21 +126,8 @@ def exec_axpy(data_size_per_bank: int, banks_per_array: int, load_from=None):
         create_hbm_access(state, "out", f"hbm.{2*banks_per_array}:{3*banks_per_array}",
             [banks_per_array, N], axpy_node, "_res", True, "out")
         axpy_node.expand(sdfg, state)
-        kill_symbol(sdfg, "a", dace.float32)
         
-        """
-        def print_nested_sdfg_syms(sdfg : SDFG):
-            from dace.sdfg import nodes as nd
-            print(sdfg.label)
-            print(sdfg.symbols)
-            if sdfg.parent_nsdfg_node is not None:
-                print(sdfg.parent_nsdfg_node.symbol_mapping)
-            for state in sdfg.states():
-                for n in state.nodes():
-                    if isinstance(n, nd.NestedSDFG):
-                        print_nested_sdfg_syms(n.sdfg)
-        print_nested_sdfg_syms(sdfg)
-        """
+        sdfg.sdfg_list[2].symbols["a"] = sdfg.sdfg_list[1].symbols["a"] #Why does inference fail?
 
         sdfg.apply_fpga_transformations(False)
         utils.update_array_shape(sdfg, "in1", [banks_per_array*N])
@@ -155,14 +143,12 @@ def exec_axpy(data_size_per_bank: int, banks_per_array: int, load_from=None):
         return sdfg
 
     sdfg = create_or_load(load_from, create_axpy_sdfg)
-    x = random_array(data_size_per_bank*banks_per_array, fix_constant=1)
-    y = random_array(data_size_per_bank*banks_per_array, fix_constant=1)
-    alpha = random_array(1, fix_constant=1.9)
+    x = random_array(data_size_per_bank*banks_per_array)
+    y = random_array(data_size_per_bank*banks_per_array)
+    alpha = random_array(1)
     result = np.zeros(data_size_per_bank*banks_per_array, dtype=np.float32)
     check = (alpha[0] * x) + y
     sdfg(in1=x, in2=y, out=result, a=alpha[0], n=data_size_per_bank)
-    print(result)
-    print(check)
     assert np.allclose(result, check)
 
 
@@ -196,4 +182,4 @@ def createGemm(target : str = None):
     
 #exec_dot_hbm(1000, 8)
 #sdfg = utils.load_precompiled_sdfg("mycompiledstuff")
-exec_axpy(10, 2)
+exec_axpy(1000, 10)
