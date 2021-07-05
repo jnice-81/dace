@@ -710,6 +710,13 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandGemvFpgaTilesByColumnHbm(ExpandTransformation):
+    """
+    An implementation of Gemv  based on ExpandGemvFpgaTilesByColumn, that uses HBM to store A.
+    A is expected to be split over the banks along the 0th dimension (one row is always on one bank)
+    for computation without transposing A, respectively along the 1th dimension such that one column
+    is always on one bank. The matrix has to be stored row-major, with or without transposing.
+    x and y should be on one bank, without being split.
+    """
     environments = []
 
     @staticmethod
@@ -740,15 +747,12 @@ class ExpandGemvFpgaTilesByColumnHbm(ExpandTransformation):
 
         xform = hbm_transform.HbmTransform(sdfg.sdfg_id, -1, {}, -1)
         xform.outer_map_range = {"k" : f"0:{A_banks}"}
-        for node in state.source_nodes():
+        for node in state.source_nodes() + state.sink_nodes():
             if isinstance(node, dace.sdfg.nodes.AccessNode):
                 if node.data == "_y" or node.data == "_A":
                     xform.update_hbm_access_list.append((state, node, "k"))
-                    xform.update_hbm_access_list.append((state, node, "K"))
-        for node in state.sink_nodes():
-            if isinstance(node, dace.sdfg.nodes.AccessNode) and node.data == "_y":
-                xform.update_hbm_access_list.append((state, node, "k"))
-        sdfg.view()
+        xform.apply(sdfg)
+        #sdfg.view()
 
         return sdfg
 
