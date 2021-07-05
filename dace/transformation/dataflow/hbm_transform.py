@@ -102,19 +102,15 @@ class HbmTransform(transformation.Transformation):
             if is_write:
                 inner_edge = state.add_edge(fwtasklet, '_out', inner_edge.dst, 
                     inner_edge.dst_conn, mem)
-            else:
-                inner_edge = state.add_edge(inner_edge.src, inner_edge.src_conn,
-                    fwtasklet, '_in', mem)
-
-        utils.update_path_subsets(state, inner_edge, new_subset)
-
-        if isinstance(other_node, nd.AccessNode):
-            if is_write:
                 state.add_edge(other_node, path[0].src_conn, fwtasklet, "_in", 
                                 memlet.Memlet(other_node.data, subset=target_other_subset))
             else:
+                inner_edge = state.add_edge(inner_edge.src, inner_edge.src_conn,
+                    fwtasklet, '_in', mem)
                 state.add_edge(fwtasklet, "_out",  other_node, path[-1].dst_conn,
                                 memlet.Memlet(other_node.data, subset=target_other_subset))
+
+        utils.update_path_subsets(state, inner_edge, new_subset)
 
     def _update_array_hbm(self, array_name: str, new_location: str, sdfg : SDFG):
             desc = sdfg.arrays[array_name]
