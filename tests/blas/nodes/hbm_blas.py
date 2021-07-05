@@ -182,18 +182,18 @@ def exec_gemv(banks_A, m_size_per_bank, n_size, transpose_A = True, load_from : 
         if transpose_A:
             shape_A = [banks_A, N , M]
             shape_x = [1, N]
-            shape_y = [1, M * banks_A]
+            shape_y = [banks_A, M]
         else:
             shape_A = [banks_A, M, N]
             shape_x = [1, M * banks_A]
-            shape_y = [1, N]
+            shape_y = [banks_A, N]
 
         sdfg = SDFG("hbm_gemv")
         state = sdfg.add_state("gemv")
         gemv_node = blas.Gemv("sgemv_node", None, transpose_A, a, b)
         gemv_node.implementation = "FPGA_TilesByColumnHbm"
         state.add_node(gemv_node)
-        create_hbm_access(state, "A", f"hbm.3:{banks_A+3}", 
+        create_hbm_access(state, "A", f"hbm.2:{banks_A+2}", 
             shape_A, gemv_node, "_A", False, "A")
         create_hbm_access(state, "x", "hbm.0:1", shape_x, gemv_node,
             "_x", False, "x")
@@ -202,6 +202,7 @@ def exec_gemv(banks_A, m_size_per_bank, n_size, transpose_A = True, load_from : 
         create_hbm_access(state, "y", None, None, gemv_node,
             "_y", True, "y")
         gemv_node.expand(sdfg, state)
+        #sdfg.view()
         sdfg.apply_fpga_transformations(False)
         
         for xform in optimizer.Optimizer(sdfg).get_pattern_matches(

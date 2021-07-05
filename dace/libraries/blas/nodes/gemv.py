@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
 from dace import properties, symbolic
 import dace.library
 import dace.sdfg.nodes
 from dace.sdfg import SDFG, SDFGState, utils
-from dace import memlet as mm, data as dt
+from dace import memlet as mm, data as dt, subsets
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from dace.libraries.blas import blas_helpers
@@ -715,7 +716,8 @@ class ExpandGemvFpgaTilesByColumnHbm(ExpandTransformation):
     A is expected to be split over the banks along the 0th dimension (one row is always on one bank)
     for computation without transposing A, respectively along the 1th dimension such that one column
     is always on one bank. The matrix has to be stored row-major, with or without transposing.
-    x and y should be on one bank, without being split.
+    x should be on one bank. y can be split or not, but should have 2 dimensions, with the first being sized
+    the same as the number of banks that A is placed on.
     """
     environments = []
 
@@ -740,7 +742,7 @@ class ExpandGemvFpgaTilesByColumnHbm(ExpandTransformation):
 
         A_banks = size_a[0]
         size_x_pass = size_x[0]
-        size_y_pass = size_y_in[0] // A_banks
+        size_y_pass = size_y_in[1]
         sdfg = ExpandGemvFpgaTilesByColumn.expansion(node, state, parent_sdfg, 
             tile_size_x, tile_size_y, size_x_pass, size_y_pass)
         state: SDFGState = sdfg.states()[0]
@@ -749,10 +751,11 @@ class ExpandGemvFpgaTilesByColumnHbm(ExpandTransformation):
         xform.outer_map_range = {"k" : f"0:{A_banks}"}
         for node in state.source_nodes() + state.sink_nodes():
             if isinstance(node, dace.sdfg.nodes.AccessNode):
-                if node.data == "_y" or node.data == "_A":
+                if node.data == "_A" or node.data == "_y":
                     xform.update_hbm_access_list.append((state, node, "k"))
+                if node.data == "_x":
+                    xform.update_hbm_access_list.append((state, node, "0"))
         xform.apply(sdfg)
-        #sdfg.view()
 
         return sdfg
 
@@ -1047,7 +1050,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
                 size_y_in = subset.size()
 
         if self.implementation == "FPGA_TilesByColumnHbm" and (len(size_a) != 3 
-            or len(size_x) > 2 or len(size_y_in) > 2):
+            or len(size_x) > 2 or len(size_y_in) > 3 or len(size_y_in) < 2):
             raise ValueError("Matrix-vector product for HBM expects A on HBM")
         elif self.implementation != "FPGA_TilesByColumnHbm" and len(size_a) != 2 or len(size_x) != 1:
             raise ValueError(
@@ -1075,7 +1078,11 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         size_y_out = out_subset.size()
         if size_y_in is not None and size_y_in != size_y_out:
             raise ValueError("Input y-vector must match output y-vector.")
-        if (len(size_y_out) != 1 or size_y_out[0] != a_rows):
+        if (self.implementation == "FPGA_TilesByColumnHbm" and (size_y_out[0]
+            != size_a[0] or size_y_out[0] * size_y_out[1] != a_rows)):
+            raise ValueError("For FPGA_TilesByColumnHbm the first dim should be equal to the first "
+                "dim of A. Additionaly the total size of y should equal the number of rows of the matrix.")
+        elif self.implementation != "FPGA_TilesByColumnHbm" and (len(size_y_out) != 1 or size_y_out[0] != a_rows):
             raise ValueError("Vector input to GEMV must match matrix rows.")
 
 
