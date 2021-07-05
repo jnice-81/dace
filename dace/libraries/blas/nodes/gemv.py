@@ -3,13 +3,14 @@ import copy
 from dace import properties, symbolic
 import dace.library
 import dace.sdfg.nodes
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, utils
 from dace import memlet as mm, data as dt
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from dace.libraries.blas import blas_helpers
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import environments
+from dace.transformation.dataflow import hbm_transform
 import numpy as np
 import warnings
 
@@ -509,7 +510,7 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node, state, sdfg, tile_size_x=None, tile_size_y=None):
+    def expansion(node, state, sdfg, tile_size_x=None, tile_size_y=None, size_x = None, size_y = None):
         """
         :param node: Node to expand.
         :param parent_state: State that the node is in.
@@ -561,8 +562,8 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
             read_y = state.add_read("_y")
         write_y = state.add_write("_y")
 
-        size_x = desc_x.shape[0]
-        size_y = desc_y.shape[0]
+        size_x = size_x or desc_x.shape[0]
+        size_y = size_y or desc_y.shape[0]
         if tile_size_x is None:
             tile_size_x = size_x
         if tile_size_y is None:
@@ -707,6 +708,49 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
 
         return sdfg
 
+@dace.library.expansion
+class ExpandGemvFpgaTilesByColumnHbm(ExpandTransformation):
+    environments = []
+
+    @staticmethod
+    def expansion(node, state: SDFGState, parent_sdfg: SDFG, tile_size_x=None, tile_size_y=None, unrollparam="k"):
+        node.validate(parent_sdfg, state)
+
+        for _, _, _, dst_conn, memlet in state.in_edges(node):
+            if dst_conn == "_A":
+                subset = copy.deepcopy(memlet.subset)
+                subset.squeeze()
+                size_a = subset.size()
+            if dst_conn == "_x":
+                subset = copy.deepcopy(memlet.subset)
+                subset.squeeze()
+                size_x = subset.size()
+        for _, src_conn, _, _, memlet in state.out_edges(node):
+            if src_conn == "_y":
+                subset = copy.deepcopy(memlet.subset)
+                subset.squeeze()
+                size_y_in = subset.size()
+
+        A_banks = size_a[0]
+        size_x_pass = size_x[0]
+        size_y_pass = size_y_in[0] // A_banks
+        sdfg = ExpandGemvFpgaTilesByColumn.expansion(node, state, parent_sdfg, 
+            tile_size_x, tile_size_y, size_x_pass, size_y_pass)
+        state: SDFGState = sdfg.states()[0]
+
+        xform = hbm_transform.HbmTransform(sdfg.sdfg_id, -1, {}, -1)
+        xform.outer_map_range = {"k" : f"0:{A_banks}"}
+        for node in state.source_nodes():
+            if isinstance(node, dace.sdfg.nodes.AccessNode):
+                if node.data == "_y" or node.data == "_A":
+                    xform.update_hbm_access_list.append((state, node, "k"))
+                    xform.update_hbm_access_list.append((state, node, "K"))
+        for node in state.sink_nodes():
+            if isinstance(node, dace.sdfg.nodes.AccessNode) and node.data == "_y":
+                xform.update_hbm_access_list.append((state, node, "k"))
+        sdfg.view()
+
+        return sdfg
 
 @dace.library.expansion
 class ExpandGemvCuBLAS(ExpandTransformation):
@@ -954,6 +998,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         "cuBLAS": ExpandGemvCuBLAS,
         "FPGA_Accumulate": ExpandGemvFpgaAccumulate,
         "FPGA_TilesByColumn": ExpandGemvFpgaTilesByColumn,
+        "FPGA_TilesByColumnHbm": ExpandGemvFpgaTilesByColumnHbm,
         "PBLAS": ExpandGemvPBLAS
     }
     default_implementation = None
@@ -997,12 +1042,19 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
                 subset.squeeze()
                 size_y_in = subset.size()
 
-        if len(size_a) != 2 or len(size_x) != 1:
+        if self.implementation == "FPGA_TilesByColumnHbm" and (len(size_a) != 3 
+            or len(size_x) > 2 or len(size_y_in) > 2):
+            raise ValueError("Matrix-vector product for HBM expects A on HBM")
+        elif self.implementation != "FPGA_TilesByColumnHbm" and len(size_a) != 2 or len(size_x) != 1:
             raise ValueError(
                 "Matrix-vector product only supported on matrix-vector input")
 
-        a_cols = size_a[1] if not self.transA else size_a[0]
-        a_rows = size_a[0] if not self.transA else size_a[1]
+        if self.implementation == "FPGA_TilesByColumnHbm":
+            a_cols = size_a[2] if not self.transA else size_a[1]
+            a_rows = size_a[1] * size_a[0] if not self.transA else size_a[2] * size_a[0]
+        else:
+            a_cols = size_a[1] if not self.transA else size_a[0]
+            a_rows = size_a[0] if not self.transA else size_a[1]
 
         if a_cols != size_x[0]:
             raise ValueError(f"Columns of A ({a_cols}) don't match "
