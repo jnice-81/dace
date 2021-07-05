@@ -44,25 +44,21 @@ class HbmCopyTransform(transformation.Transformation):
         dst = graph.nodes()[candidate[HbmCopyTransform._dst_node]]
         src_array = sdfg.arrays[src.data]
         dst_array = sdfg.arrays[dst.data]
-        parse_src = utils.parse_location_bank(src_array)
-        parse_dst = utils.parse_location_bank(dst_array)
-        src_type = "" if parse_src is None else parse_src[0]
-        dst_type = "" if parse_dst is None else parse_dst[0]
-
-        #Not between HBM and not between any banks
-        if (src_type == "HBM" and dst_type == "HBM" or
-            src_type != "HBM" and dst_type != "HBM"):
-            return False
 
         #same dimensions means HBM-array needs 1 dimension more
-        if src_type == "HBM":
-            if len(src_array.shape) - 1 != len(dst_array.shape):
+        collect_src = len(src_array.shape) - 1 == len(dst_array.shape)
+        distribute_dst = len(src_array.shape) + 1 == len(dst_array.shape)
+        if collect_src:
+            try:
+                tmp = int(src_array.shape[0])
+            except:
                 return False
-        else:
-            if len(src_array.shape) + 1 != len(dst_array.shape):
+        elif distribute_dst:
+            try:
+                tmp = int(dst_array.shape[0])
+            except:
                 return False
-        
-        return True
+        return collect_src or distribute_dst
 
     @staticmethod
     def expressions():
@@ -76,22 +72,19 @@ class HbmCopyTransform(transformation.Transformation):
         dst = graph.nodes()[self.subgraph[HbmCopyTransform._dst_node]]
         src_array = sdfg.arrays[src.data]
         dst_array = sdfg.arrays[dst.data]
-        parse_src = utils.parse_location_bank(src_array)
-        parse_dst = utils.parse_location_bank(dst_array)
-        src_type = "" if parse_src is None else parse_src[0]
-        dst_type = "" if parse_dst is None else parse_dst[0]
-        if src_type == "HBM":
-            low, high = utils.get_multibank_ranges_from_subset(parse_src[1], sdfg)
+        collect_src = len(src_array.shape) - 1 == len(dst_array.shape) #If this is not true distribute_dst is (checked in can_apply)
+        if collect_src:
+            bank_count = int(src_array.shape[0])
             true_size = dst_array.shape
         else:
-            low, high = utils.get_multibank_ranges_from_subset(parse_dst[1], sdfg)
+            bank_count = int(dst_array.shape[0])
             true_size = src_array.shape
         ndim = len(true_size)
         
         #Figure out how to split
         if self.split_array_info is None:
-            tmp_split = round((high - low)**(1 / ndim))
-            if tmp_split**ndim != high - low:
+            tmp_split = round((bank_count)**(1 / ndim))
+            if tmp_split**ndim != bank_count:
                 raise RuntimeError("Splitting equally is not possible with "
                     "this array dimension and number of HBM-banks")
             split_info = [tmp_split]*ndim
@@ -124,10 +117,10 @@ class HbmCopyTransform(transformation.Transformation):
             target_offset.append(f"{usable_params[i]}*{target_size[i]}")
 
         target_size_str = ", ".join([f"{x}:{y}" for x, y in zip([0]*ndim, target_size)])
-        target_hbm_bank_str = ", ".join(target_hbm_bank)
+        target_hbm_bank_str = "+ ".join(target_hbm_bank)
         target_offset_str = ", ".join([f"({x}):({x}+{y})" 
             for x, y in zip(target_offset, target_size)])
-        if src_type == "HBM":
+        if collect_src:
             copy_memlet = memlet.Memlet(
                 f"{src.data}[{target_hbm_bank_str}, {target_size_str}]->"
                 f"{target_offset_str}"
