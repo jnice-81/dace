@@ -11,7 +11,6 @@ from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from dace.libraries.blas import blas_helpers
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import environments
-from dace.transformation.dataflow import hbm_transform
 import numpy as np
 import warnings
 
@@ -750,6 +749,7 @@ class ExpandGemvFpgaTilesByColumnHbm(ExpandTransformation):
         sdfg.arrays["_x"].storage = dtypes.StorageType.FPGA_Global
         sdfg.arrays["_y"].storage = dtypes.StorageType.FPGA_Global
 
+        from dace.transformation.dataflow import hbm_transform # Avoid import loop
         xform = hbm_transform.HbmTransform(sdfg.sdfg_id, -1, {}, -1)
         xform.outer_map_range = {"k" : f"0:{A_banks}"}
         for node in state.source_nodes() + state.sink_nodes():
