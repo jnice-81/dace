@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 
-from dace import properties, symbolic
+from dace import dtypes, properties, symbolic
 import dace.library
 import dace.sdfg.nodes
 from dace.sdfg import SDFG, SDFGState, utils
@@ -746,15 +746,16 @@ class ExpandGemvFpgaTilesByColumnHbm(ExpandTransformation):
         sdfg = ExpandGemvFpgaTilesByColumn.expansion(node, state, parent_sdfg, 
             tile_size_x, tile_size_y, size_x_pass, size_y_pass)
         state: SDFGState = sdfg.states()[0]
+        sdfg.arrays["_A"].storage = dtypes.StorageType.FPGA_Global
+        sdfg.arrays["_x"].storage = dtypes.StorageType.FPGA_Global
+        sdfg.arrays["_y"].storage = dtypes.StorageType.FPGA_Global
 
         xform = hbm_transform.HbmTransform(sdfg.sdfg_id, -1, {}, -1)
         xform.outer_map_range = {"k" : f"0:{A_banks}"}
         for node in state.source_nodes() + state.sink_nodes():
             if isinstance(node, dace.sdfg.nodes.AccessNode):
-                if node.data == "_A" or node.data == "_y":
+                if node.data == "_A" or node.data == "_y": #If _y is not truly a multibank array this is actually a fake - but still works
                     xform.update_hbm_access_list.append((state, node, "k"))
-                if node.data == "_x":
-                    xform.update_hbm_access_list.append((state, node, "0"))
         xform.apply(sdfg)
 
         return sdfg

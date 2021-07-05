@@ -59,7 +59,7 @@ def create_or_load(load_from, create_method):
         sdfg = utils.load_precompiled_sdfg(load_from)
     return sdfg
 
-def on_nested_sdfgs(sdfg : SDFG, action):
+def on_nested_sdfgs(sdfg: SDFG, action):
     if sdfg.parent_nsdfg_node is not None:
         action(sdfg, sdfg.parent_nsdfg_node)
     else:
@@ -68,6 +68,15 @@ def on_nested_sdfgs(sdfg : SDFG, action):
         for n in state.nodes():
             if isinstance(n, nd.NestedSDFG):
                 on_nested_sdfgs(n.sdfg, action)
+
+def print_nested_symbols(sdfg: SDFG):
+    def print_sym(sdfg, node):
+        if node is not None:
+            print(node.label)
+            print(node.symbol_mapping)
+        print(sdfg.symbols)
+        print("----------------")
+    on_nested_sdfgs(sdfg, print_sym)
 
 ################
 # Execution methods
@@ -145,6 +154,7 @@ def exec_axpy(data_size_per_bank: int, banks_per_array: int, load_from=None):
         return sdfg
 
     sdfg = create_or_load(load_from, create_axpy_sdfg)
+    sdfg.view()
     x = random_array(data_size_per_bank*banks_per_array)
     y = random_array(data_size_per_bank*banks_per_array)
     alpha = random_array(1)
@@ -175,49 +185,58 @@ def ref_gemv():
 
 def exec_gemv(banks_A, m_size_per_bank, n_size, transpose_A = True, load_from : str = None):
     def create_gemv_sdfg():
-        a = dace.symbol("a")
-        b = dace.symbol("b")
+        a = dace.symbol("a", dace.float32)
+        b = dace.symbol("b", dace.float32)
         N = dace.symbol("N")
         M = dace.symbol("M")
         if transpose_A:
             shape_A = [banks_A, N , M]
-            shape_x = [1, N]
-            shape_y = [banks_A, M]
+            true_shape_A = [N, banks_A * M]
         else:
             shape_A = [banks_A, M, N]
-            shape_x = [1, M * banks_A]
-            shape_y = [banks_A, N]
+            true_shape_A = [banks_A * M, N]
+        shape_x = [N]
+        shape_y = [banks_A, M]
 
         sdfg = SDFG("hbm_gemv")
+        sdfg.add_symbol("a", dace.float32)
+        sdfg.add_symbol("b", dace.float32)
         state = sdfg.add_state("gemv")
         gemv_node = blas.Gemv("sgemv_node", None, transpose_A, a, b)
         gemv_node.implementation = "FPGA_TilesByColumnHbm"
         state.add_node(gemv_node)
         create_hbm_access(state, "A", f"hbm.2:{banks_A+2}", 
             shape_A, gemv_node, "_A", False, "A")
-        create_hbm_access(state, "x", "hbm.0:1", shape_x, gemv_node,
+        create_hbm_access(state, "x", "hbm.0", shape_x, gemv_node,
             "_x", False, "x")
-        create_hbm_access(state, "y", "hbm.1:2", shape_y, gemv_node,
+        create_hbm_access(state, "y", "hbm.1", shape_y, gemv_node,
             "_y", False, "y")
         create_hbm_access(state, "y", None, None, gemv_node,
             "_y", True, "y")
-        gemv_node.expand(sdfg, state)
-        #sdfg.view()
+        gemv_node.expand(sdfg, state, tile_size_x=16, tile_size_y=16)
+        sdfg.sdfg_list[2].symbols["a"] = sdfg.sdfg_list[0].symbols["a"]
+        sdfg.sdfg_list[2].symbols["b"] = sdfg.sdfg_list[0].symbols["b"]
+
         sdfg.apply_fpga_transformations(False)
-        
+        utils.update_array_shape(sdfg, "A", true_shape_A)
+        utils.update_array_shape(sdfg, "y", [banks_A * M])
+        sdfg.arrays["A"].storage = dtypes.StorageType.CPU_Heap
+        sdfg.arrays["y"].storage = dtypes.StorageType.CPU_Heap
         for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
             patterns=[hbm_copy_transform.HbmCopyTransform]):
-            src = sdfg.nodes()[xform.subgraph[hbm_copy_transform.HbmCopyTransform._src_node]]
+            graph = sdfg.nodes()[xform.state_id]
+            src = graph.nodes()[xform.subgraph[hbm_copy_transform.HbmCopyTransform._src_node]]
             if src.data == "A":
                 if transpose_A:
                     xform.split_array_info = [1, banks_A]
                 else:
                     xform.split_array_info = [banks_A, 1]
-            xform.apply()
+            xform.apply(sdfg)
 
         return sdfg
 
     sdfg = create_or_load(load_from, create_gemv_sdfg)
+    sdfg.view()
     if transpose_A:
         size_fst, size_snd = n_size, m_size_per_bank * banks_A
     else:
