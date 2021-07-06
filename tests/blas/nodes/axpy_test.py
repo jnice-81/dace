@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
+from dace import dtypes, subsets
+from dace.sdfg import utils, nodes
 import numpy as np
 
 import argparse
@@ -13,6 +15,8 @@ from dace.memlet import Memlet
 import dace.libraries.blas as blas
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory
+from dace.transformation.dataflow import hbm_copy_transform
+from dace.transformation import optimizer
 
 from dace.libraries.standard.memory import aligned_ndarray
 
@@ -39,11 +43,13 @@ def run_test(configs, target):
             sdfg = stream_fpga_graph(veclen, dtype, "fpga", i)
         elif target == "fpga_array":
             sdfg = fpga_graph(veclen, dtype, "fpga", i)
+        elif target == "fpga_hbm":
+            sdfg = fpga_hbm_graph(veclen, dtype, "fpga", i)
         else:
             sdfg = pure_graph(veclen, dtype, "pure", i)
         program = sdfg.compile()
 
-        if target in ["fpga_stream", "fpga_array"]:
+        if target in ["fpga_stream", "fpga_array", "fpga_hbm"]:
             program(x=x, y=y, a=a, n=np.int32(n))
             ref_norm = np.linalg.norm(y - ref_result) / n
         else:
@@ -58,7 +64,7 @@ def reference_result(x_in, y_in, alpha):
     return scipy.linalg.blas.saxpy(x_in, y_in, a=alpha)
 
 
-def pure_graph(veclen, dtype, implementation, test_case):
+def pure_graph(veclen, dtype, implementation, test_case, expand_lib_node=True):
 
     n = dace.symbol("n")
     a = dace.symbol("a")
@@ -95,7 +101,8 @@ def pure_graph(veclen, dtype, implementation, test_case):
                                src_conn="_res",
                                memlet=Memlet(f"y[0:n/{veclen}]"))
 
-    sdfg.expand_library_nodes()
+    if expand_lib_node:
+        sdfg.expand_library_nodes()
 
     return sdfg
 
@@ -106,10 +113,38 @@ def test_pure():
 
 
 def fpga_graph(veclen, dtype, test_case, expansion):
-    sdfg = pure_graph(veclen, dtype, test_case, expansion)
+    sdfg = pure_graph(veclen, dtype, test_case, expansion, False)
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
     return sdfg
 
+def fpga_hbm_graph(veclen, dtype, test_case, expansion):
+    sdfg = pure_graph(veclen, dtype, "fpga_hbm", expansion, False)
+
+    banks_per_array = 8
+    per_array_size = sdfg.arrays["x"].shape[0] / banks_per_array
+    utils.update_array_shape(sdfg, "x", [banks_per_array, per_array_size])
+    utils.update_array_shape(sdfg, "y", [banks_per_array, per_array_size])
+    sdfg.arrays["x"].location["bank"] = f"hbm.0:{banks_per_array}"
+    sdfg.arrays["y"].location["bank"] = f"hbm.{banks_per_array}:{2*banks_per_array}"
+    state = sdfg.states()[0]
+    for node in state:
+        if isinstance(node, nodes.AccessNode):
+            utils.update_path_subsets(state, node,
+                subsets.Range.from_string(f"0:{banks_per_array}, 0:{per_array_size}"))
+    libnode = list(filter(lambda x : isinstance(x, nodes.LibraryNode), state.nodes()))[0]
+    libnode.n = dace.symbolic.pystr_to_symbolic("n/8")
+    sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
+    sdfg.expand_library_nodes()
+    utils.update_array_shape(sdfg, "x", [per_array_size * banks_per_array])
+    utils.update_array_shape(sdfg, "y", [per_array_size * banks_per_array])
+    sdfg.arrays["x"].storage = dtypes.StorageType.CPU_Heap
+    sdfg.arrays["y"].storage = dtypes.StorageType.CPU_Heap
+    for xform in optimizer.Optimizer(sdfg).get_pattern_matches(
+        patterns=[hbm_copy_transform.HbmCopyTransform]):
+        xform.apply(sdfg)
+    sdfg.sdfg_list[3].symbols["a"] = sdfg.sdfg_list[2].symbols["a"] #Why does inference fail?
+
+    return sdfg
 
 def stream_fpga_graph(veclen, precision, test_case, expansion):
     sdfg = fpga_graph(veclen, precision, test_case, expansion)
@@ -125,8 +160,9 @@ def _test_fpga(target):
     configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
     run_test(configs, target)
 
-
 if __name__ == "__main__":
+    _test_fpga("fpga_hbm")
+    exit()
 
     cmdParser = argparse.ArgumentParser(allow_abbrev=False)
 
@@ -137,6 +173,7 @@ if __name__ == "__main__":
     if args.target == "fpga":
         _test_fpga("fpga_array")
         _test_fpga("fpga_stream")
+        _test_fpga("fpga_hbm")
     elif args.target == "pure":
         test_pure()
     else:
