@@ -20,6 +20,12 @@ class FPGATransformSDFG(transformation.Transformation):
         "If True, transient arrays that are fully internal are pulled out so "
         "that they can be allocated on the host.")
 
+    add_outputs_as_inputs = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="If this is set then outputs will be initialzed from the host side buffer"
+    )
+
     @staticmethod
     def annotates_memlets():
         return True
@@ -60,4 +66,5 @@ class FPGATransformSDFG(transformation.Transformation):
         fpga_transform = FPGATransformState(sdfg_id, -1,
                                             {FPGATransformState._state: 0},
                                             self.expr_index)
+        fpga_transform.add_outputs_as_inputs = self.add_outputs_as_inputs
         fpga_transform.apply(sdfg)

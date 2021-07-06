@@ -58,7 +58,7 @@ def create_deeply_nested_sdfg():
                           yarr,
                           memlet=mem.Memlet.from_array("y", sdfg.arrays["y"]),
                           src_conn="xout")
-    sdfg.apply_fpga_transformations()
+    sdfg.apply_fpga_transformations(False)
 
     return sdfg
 

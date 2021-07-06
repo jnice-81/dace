@@ -1213,6 +1213,10 @@ class NestSDFG(transformation.Transformation):
                                 if state.in_degree(node) > 0:
                                     outputs[arrname] = arrname_nested
 
+        # Purge the old descriptors
+        for name in set(itertools.chain(inputs, outputs, transients)):
+            del nested_sdfg.arrays[name]
+
         # Catch data containers that we didn't find on any access nodes, and add
         # them as inputs. This can happen when a scalar input is used on an
         # interstate edge, and thus doesn't appear in the dataflow.
@@ -1226,9 +1230,10 @@ class NestSDFG(transformation.Transformation):
                 nested_sdfg.arrays[arrname_nested] = desc
                 inputs[arrname] = arrname_nested
 
-        # Purge the old descriptors
-        for name in set(itertools.chain(inputs, outputs, transients)):
-            del nested_sdfg.arrays[name]
+        # Since we might add more arrays we need to delete again
+        for name in inputs:
+            if name in nested_sdfg.arrays:
+                del nested_sdfg.arrays[name]
 
         for newarrname in transients.values():
             nested_sdfg.arrays[newarrname].transient = False
