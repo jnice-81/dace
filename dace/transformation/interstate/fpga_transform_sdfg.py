@@ -23,7 +23,8 @@ class FPGATransformSDFG(transformation.Transformation):
     add_outputs_as_inputs = properties.Property(
         dtype=bool,
         default=True,
-        desc="If this is set then outputs will be initialzed from the host side buffer"
+        desc=
+        "If this is set then outputs will be initialzed from the host side buffer"
     )
 
     @staticmethod
