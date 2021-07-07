@@ -34,7 +34,7 @@ def fpga_update(sdfg, state, depth):
 class FPGATransformState(transformation.Transformation):
     """ Implements the FPGATransformState transformation. """
 
-    add_outputs_as_inputs = properties.Property(
+    copy_outputs_from_host = properties.Property(
         dtype=bool,
         default=True,
         desc="If this is set then outputs will be initialzed from the host side buffer"
@@ -171,7 +171,7 @@ class FPGATransformState(transformation.Transformation):
                         wcr_input_nodes.add(outer_node)
 
         prestate_nodes = input_nodes
-        if self.add_outputs_as_inputs:
+        if self.copy_outputs_from_host:
             prestate_nodes = prestate_nodes + output_nodes
         if prestate_nodes:
             # create pre_state

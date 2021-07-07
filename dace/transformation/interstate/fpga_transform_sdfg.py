@@ -20,7 +20,7 @@ class FPGATransformSDFG(transformation.Transformation):
         "If True, transient arrays that are fully internal are pulled out so "
         "that they can be allocated on the host.")
 
-    add_outputs_as_inputs = properties.Property(
+    copy_outputs_from_host = properties.Property(
         dtype=bool,
         default=True,
         desc=
@@ -67,5 +67,5 @@ class FPGATransformSDFG(transformation.Transformation):
         fpga_transform = FPGATransformState(sdfg_id, -1,
                                             {FPGATransformState._state: 0},
                                             self.expr_index)
-        fpga_transform.add_outputs_as_inputs = self.add_outputs_as_inputs
+        fpga_transform.copy_outputs_from_host = self.copy_outputs_from_host
         fpga_transform.apply(sdfg)
