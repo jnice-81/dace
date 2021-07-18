@@ -129,9 +129,5 @@ class HbmCopyTransform(transformation.Transformation):
                 f"{src.data}[{target_offset_str}]->{target_hbm_bank_str}, "
                 f"{target_size_str}"
             )
-<<<<<<< HEAD
         graph.add_edge(src, None, dst, None, copy_memlet)
         
-=======
-        graph.add_edge(src, None, dst, None, copy_memlet)
->>>>>>> hbm_transformations
