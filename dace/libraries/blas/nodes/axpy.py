@@ -1,4 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from dace.sdfg import utils
+from dace.codegen.targets import fpga
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -59,8 +61,9 @@ class ExpandAxpyVectorized(ExpandTransformation):
         y_in = axpy_state.add_read("_y")
         z_out = axpy_state.add_write("_res")
 
-        vec_map_entry, vec_map_exit = axpy_state.add_map(
-            "axpy", {"i": f"0:{n}"}, schedule=schedule)
+        vec_map_entry, vec_map_exit = axpy_state.add_map("axpy",
+                                                         {"i": f"0:{n}"},
+                                                         schedule=schedule)
 
         axpy_tasklet = axpy_state.add_tasklet(
             "axpy", ["x_conn", "y_conn"], ["z_conn"],
@@ -115,6 +118,52 @@ class ExpandAxpyFpga(ExpandTransformation):
             **kwargs)
 
 
+@dace.library.expansion
+class ExpandAxpyFpgaHbm(ExpandTransformation):
+    """
+    An implementation of Axpy based on ExpandAxpyFpga that uses HBM. Expects attached
+    arrays to be on HBM and 2 dimensional inputs/outputs. 
+    """
+    environments = []
+
+    @staticmethod
+    def expansion(node,
+                  parent_state: SDFGState,
+                  parent_sdfg: SDFG,
+                  param="k",
+                  **kwargs):
+        """
+        :param node: Node to expand.
+        :param parent_state: State that the node is in.
+        :param parent_sdfg: SDFG that the node is in.
+        :param param: The param symbol for the top-level map mapping over HBM-banks
+        """
+        sdfg: SDFG = ExpandAxpyFpga.expansion(node, parent_state, parent_sdfg,
+                                              **kwargs)
+
+        desc_x = parent_sdfg.arrays[parent_state.in_edges(node)[0].data.data]
+        desc_y = parent_sdfg.arrays[parent_state.in_edges(node)[1].data.data]
+        desc_res = parent_sdfg.arrays[parent_state.out_edges(node)[0].data.data]
+        banks_x = fpga.parse_location_bank(desc_x)
+        banks_y = fpga.parse_location_bank(desc_y)
+        banks_res = fpga.parse_location_bank(desc_res)
+        tmp_bank_c = fpga.get_multibank_ranges_from_subset(
+            banks_x[1], sdfg)
+        bank_count = tmp_bank_c[1] - tmp_bank_c[
+            0]  # We know this is equal for all arrays it's checked in validation
+
+        from dace.transformation.dataflow import hbm_transform  # Avoid import loop
+        xform = hbm_transform.HbmTransform(sdfg.sdfg_id, -1, {}, -1)
+        xform.outer_map_range = (param, f"0:{bank_count}")
+        xform.update_array_access = ["_x", "_y", "_res"]
+        xform.update_array_banks = [("_x", banks_x[0], banks_x[1]),
+                                    ("_y", banks_y[0], banks_y[1]),
+                                    ("_res", banks_res[0], banks_res[1])]
+        xform.apply(sdfg)
+
+        return sdfg
+
+
 @dace.library.node
 class Axpy(dace.sdfg.nodes.LibraryNode):
     """
@@ -127,6 +176,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "pure": ExpandAxpyVectorized,
         "fpga": ExpandAxpyFpga,
+        "fpga_hbm": ExpandAxpyFpgaHbm,
     }
     default_implementation = None
 
@@ -154,7 +204,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         else:
             return False
 
-    def validate(self, sdfg, state):
+    def validate(self, sdfg: SDFG, state: SDFGState):
 
         in_edges = state.in_edges(self)
         if len(in_edges) != 2:
@@ -168,8 +218,33 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         out_memlet = out_edges[0].data
         size = in_memlets[0].subset.size()
 
-        if len(size) != 1:
+        if len(size) != 1 and self.implementation != "fpga_hbm":
             raise ValueError("axpy only supported on 1-dimensional arrays")
+        elif len(size) != 2 and self.implementation == "fpga_hbm":
+            raise ValueError("axpy for hbm only supports 2-dimensional arrays")
+
+        if self.implementation == "fpga_hbm":
+            desc_x = sdfg.arrays[in_memlets[0].data]
+            desc_y = sdfg.arrays[in_memlets[1].data]
+            desc_z = sdfg.arrays[out_memlet.data]
+            parse_x = fpga.parse_location_bank(desc_x)
+            parse_y = fpga.parse_location_bank(desc_y)
+            parse_z = fpga.parse_location_bank(desc_z)
+            if parse_x is None or parse_y is None or parse_z is None:
+                raise ValueError(
+                    "All attached arrays must be placed explicitly in memory "
+                    "for this axpy implementation")
+            low1, high1 = fpga.get_multibank_ranges_from_subset(
+                parse_x[1], sdfg)
+            low2, high2 = fpga.get_multibank_ranges_from_subset(
+                parse_y[1], sdfg)
+            low3, high3 = fpga.get_multibank_ranges_from_subset(
+                parse_z[1], sdfg)
+            if (high1 - low1) != (high2 - low2) or (high2 - low2) != (high3 -
+                                                                      low3):
+                raise ValueError(
+                    "All attached arrays should be distributed among "
+                    "the same number of banks")
 
         if size != in_memlets[1].subset.size():
             raise ValueError("Inputs to axpy must have equal size")
