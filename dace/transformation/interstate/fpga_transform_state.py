@@ -171,9 +171,17 @@ class FPGATransformState(transformation.Transformation):
                         input_nodes.append(outer_node)
                         wcr_input_nodes.add(outer_node)
 
-        prestate_nodes = input_nodes
         if self.copy_outputs_from_host:
-            prestate_nodes = prestate_nodes + output_nodes
+            outputs_to_copy = []
+            seen_arrays = set()
+            for input in input_nodes:
+                seen_arrays.add(input.data)
+            for output in output_nodes:
+                if not output.data in seen_arrays:
+                    outputs_to_copy.append(output)
+            prestate_nodes = input_nodes + outputs_to_copy
+        else:
+            prestate_nodes = input_nodes
         if prestate_nodes:
             # create pre_state
             pre_state = sd.SDFGState('pre_' + state.label, sdfg)
