@@ -17,7 +17,8 @@ from fpga_testing import (Colors, DACE_DIR, TEST_DIR, cli, dump_logs,
 TESTS = [
     ("tests/fpga/remove_degenerate_loop.py", "remove_degenerate_loop_test",
      True, True, []),
-    ("tests/fpga/pipeline_scope.py", "pipeline_test", True, True, []),
+    ("tests/fpga/pipeline_scope.py", ["pipeline_test",
+                                      "pipeline_test_hbm"], True, True, []),
     ("tests/fpga/veclen_copy_conversion.py", "veclen_copy_conversion", True,
      True, []),
     ("samples/fpga/axpy_transformed.py", "axpy_fpga_24", True, True, [24]),
@@ -72,9 +73,11 @@ TESTS = [
     ("tests/rtl/hardware_test.py", "floating_point_vector_plus_scalar", True,
      False, [1]),
     # Auto-opt for FPGA
-    ("tests/fpga/auto_opt_fpga.py", ["global_to_local_1", "rr_interleave_1"], True, False, []),
+    ("tests/fpga/auto_opt_fpga.py", ["global_to_local_1",
+                                     "rr_interleave_1"], True, False, []),
     # Over approx Shapes
-    ("tests/fpga/overapprox_transient_shapes.py", ["overapprox_1"], True, False, []),
+    ("tests/fpga/overapprox_transient_shapes.py", ["overapprox_1"], True, False,
+     []),
     # Kernel_detection
     ("tests/fpga/kernels_detection.py", [
         "kernels_inside_component_0_1", "kernels_inside_component_1_1",
@@ -89,7 +92,8 @@ TESTS = [
      ("tests/fpga/hbm_reduce_fpga.py", ["red_2x3_2b_1", "red_1x40_8b_1", 
      "red_1x50_1b_1"], True, False, []),
     ("tests/fpga/hbm_dynamic_memlets.py", ["dyn_memlet_1"], True, False, []),
-    ("tests/fpga/hbm_deeply_nested_fpga.py", ["deepnest_test_1"], True, False, []),
+    ("tests/fpga/hbm_deeply_nested_fpga.py", ["deepnest_test_1"], True, False,
+     []),
     ("tests/fpga/hbm_copy_fpga.py", ["hbm2hbm1", "hbm2ddr1"], True, False, []),
 ]
 
