@@ -2187,6 +2187,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                    states=states)
 
     def apply_fpga_transformations(self,
+                                   copy_outputs_from_host=True,
                                    states=None,
                                    validate=True,
                                    validate_all=False,
@@ -2199,11 +2200,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Avoiding import loops
         from dace.transformation.interstate import FPGATransformSDFG
 
-        self.apply_transformations(FPGATransformSDFG,
-                                   validate=validate,
-                                   validate_all=validate_all,
-                                   strict=strict,
-                                   states=states)
+        self.apply_transformations(
+            FPGATransformSDFG,
+            validate=validate,
+            validate_all=validate_all,
+            strict=strict,
+            states=states,
+            options={"copy_outputs_from_host": copy_outputs_from_host})
 
     def expand_library_nodes(self, recursive=True):
         """

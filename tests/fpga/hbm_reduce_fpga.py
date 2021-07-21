@@ -58,7 +58,7 @@ def create_hbm_reduce_sdfg(banks=2, name="red_hbm"):
                           memlet=tmp_out_memlet,
                           src_conn="__out")
 
-    sdfg.apply_fpga_transformations()
+    sdfg.apply_fpga_transformations(False)
     return sdfg
 
 

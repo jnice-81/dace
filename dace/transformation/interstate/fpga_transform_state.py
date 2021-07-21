@@ -3,7 +3,7 @@
 
 import copy
 import dace
-from dace import data, memlet, dtypes, registry, sdfg as sd, subsets
+from dace import data, memlet, dtypes, registry, sdfg as sd, subsets, properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
@@ -31,8 +31,15 @@ def fpga_update(sdfg, state, depth):
 
 
 @registry.autoregister
+@properties.make_properties
 class FPGATransformState(transformation.Transformation):
     """ Implements the FPGATransformState transformation. """
+
+    copy_outputs_from_host = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="If this is set then outputs will be initialzed from the host side buffer"
+    )
 
     _state = sd.SDFGState()
 
@@ -163,11 +170,23 @@ class FPGATransformState(transformation.Transformation):
                             continue
                         input_nodes.append(outer_node)
                         wcr_input_nodes.add(outer_node)
-        if input_nodes:
+
+        if self.copy_outputs_from_host:
+            outputs_to_copy = []
+            seen_arrays = set()
+            for input in input_nodes:
+                seen_arrays.add(input.data)
+            for output in output_nodes:
+                if not output.data in seen_arrays:
+                    outputs_to_copy.append(output)
+            prestate_nodes = input_nodes + outputs_to_copy
+        else:
+            prestate_nodes = input_nodes
+        if prestate_nodes:
             # create pre_state
             pre_state = sd.SDFGState('pre_' + state.label, sdfg)
 
-            for node in input_nodes:
+            for node in prestate_nodes:
 
                 if not isinstance(node, dace.sdfg.nodes.AccessNode):
                     continue
@@ -198,7 +217,7 @@ class FPGATransformState(transformation.Transformation):
                                     subset=subsets.Range.from_array(desc))
                 pre_state.add_edge(pre_node, None, pre_fpga_node, None, mem)
 
-                if node not in wcr_input_nodes:
+                if node not in wcr_input_nodes and node not in output_nodes:
                     fpga_node = state.add_read('fpga_' + node.data)
                     sdutil.change_edge_src(state, node, fpga_node)
                     state.remove_node(node)
