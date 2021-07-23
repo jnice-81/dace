@@ -93,11 +93,9 @@ TESTS = [
      ("tests/fpga/hbm_reduce_fpga.py", ["red_2x3_2b_1", "red_1x40_8b_1", 
      "red_1x50_1b_1"], True, False, []),
     ("tests/fpga/hbm_dynamic_memlets.py", ["dyn_memlet_1"], True, False, []),
-    ("tests/fpga/hbm_deeply_nested_fpga.py", ["deepnest_test_1"], True, False,
-     []),
+    ("tests/fpga/hbm_deeply_nested_fpga.py", ["deepnest_test_1"], True, False, []),
     ("tests/fpga/hbm_copy_fpga.py", ["hbm2hbm1", "hbm2ddr1"], True, False, []),
 ]
-
 
 def run(path: Path, sdfg_names: Union[str, Iterable[str]], run_synthesis: bool,
         assert_ii_1: bool, args: Iterable[Any]):
