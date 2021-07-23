@@ -390,7 +390,7 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
         else:
             raise ValueError("The inputs for this implementation of dot must already be in HBM")
         if n is None:
-            n = list(desc_x.shape)[1]
+            n = list(desc_x.shape)[1] * desc_x.veclen # FPGA_PartialSums divides by veclen
 
         #modify the FpgaPartialSums implementation to use HBM
         sdfg: SDFG = ExpandDotFpgaPartialSums.expansion(node, parent_state, parent_sdfg, n, partial_width)

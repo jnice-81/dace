@@ -31,7 +31,7 @@ def pure_graph(implementation, dtype, veclen):
 
     if implementation == "FPGA_HBM_PartialSums":
         bank_count = 8
-        input_lenght = n / (veclen * bank_count)
+        input_lenght = n // (veclen * bank_count)
     else:
         input_lenght = n / veclen
 
@@ -99,13 +99,11 @@ def fpga_graph(implementation, dtype, veclen):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=64)
+    parser.add_argument("N", type=int, nargs="?", default=128)
     parser.add_argument("--target", dest="target", default="pure")
     parser.add_argument("--vector-length", type=int, default=16)
     args = parser.parse_args()
     size = args.N
-
-    args.target = "xilinx_hbm"
 
     if args.target == "pure":
         sdfg = pure_graph("pure", dace.float32, args.vector_length)
