@@ -1054,12 +1054,11 @@ def update_path_subsets(
     new_subset: sbs.Subset,
 ):
     """
-    Will take the memlet path defined by :param inner_edge:, and recreate it with
+    Will take the memlet path defined by :param inner_edge:, and recreate it with the specified new_subset
     :param inner_edge_info: This is either the inner edge defining the memlet path that
         should be modified, or an AccessNode with exactly one attached ingoing or outgoing
-        memlet path
-    :param new_subset:, where :param inner_edge: has to be the innermost edge.
-    If 
+        memlet path 
+    :param new_subset:, The new subset set on the innermost edge
     """
     if isinstance(inner_edge_info, nd.AccessNode):
         some_edge = list(state.all_edges(inner_edge_info))
@@ -1096,12 +1095,14 @@ def update_path_subsets(
                           dst_conn=dst_conn)
 
 
-def update_array_shape(sdfg: SDFG,
-                       array_name: str,
-                       new_shape: Iterable,
-                       strides=None,
-                       offset=None,
-                       total_size=None,):
+def update_array_shape(
+    sdfg: SDFG,
+    array_name: str,
+    new_shape: Iterable,
+    strides=None,
+    offset=None,
+    total_size=None,
+):
     """
     Updates the shape of an array.
     """

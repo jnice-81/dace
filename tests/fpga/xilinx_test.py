@@ -44,8 +44,9 @@ TESTS = [
     ("tests/transformations/mapfusion_fpga.py",
      ["multiple_fusions_1", "fusion_with_transient_1"], True, False, []),
     # BLAS
-    ("tests/blas/nodes/axpy_test.py", ["axpy_test_fpga_1_w4_1", "axpy_test_fpga_hbm_1_w4_1"], 
-    True, True, ["--target", "fpga"]),
+    ("tests/blas/nodes/axpy_test.py",
+     ["axpy_test_fpga_1_w4_1",
+      "axpy_test_fpga_hbm_1_w4_1"], True, True, ["--target", "fpga"]),
     ("tests/blas/nodes/dot_test.py", "dot_FPGA_PartialSums_float_w16_1", True,
      True, ["--target", "xilinx"]),
     ("tests/blas/nodes/gemv_test.py", "gemv_FPGA_TilesByColumn_float_True_w4_1",
@@ -96,6 +97,7 @@ TESTS = [
      []),
     ("tests/fpga/hbm_copy_fpga.py", ["hbm2hbm1", "hbm2ddr1"], True, False, []),
 ]
+
 
 def run(path: Path, sdfg_names: Union[str, Iterable[str]], run_synthesis: bool,
         assert_ii_1: bool, args: Iterable[Any]):
