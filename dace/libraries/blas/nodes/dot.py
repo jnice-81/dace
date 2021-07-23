@@ -1,5 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
+from dace.sdfg import utils
+from dace.codegen.targets import fpga
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -7,7 +10,7 @@ from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
-from dace import data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic
+from dace import data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic, subsets
 from dace.frontend.common import op_repository as oprepo
 
 
@@ -363,6 +366,100 @@ reduce_out = prev + result_in""")
 
         return sdfg
 
+@dace.library.expansion
+class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
+    """
+    Implementation of Dot that uses HBM. Based on ExpandDotFpgaPartialSums.
+    """
+    environments = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, n=None, partial_width=8, param="k"):
+        (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(
+            parent_sdfg, parent_state)
+        #perform validation and collect infos
+        if 'bank' in desc_x.location and 'bank' in desc_y.location and 'bank' in desc_res.location:
+            loc1 = fpga.parse_location_bank(desc_x)
+            loc2 = fpga.parse_location_bank(desc_y)
+            if loc1[0] != "HBM" or loc2[0] != "HBM":
+                raise NotImplementedError("This implementation of dot only supports HBM inputs")
+            low1, high1 = fpga.get_multibank_ranges_from_subset(loc1[1], parent_sdfg)
+            low2, high2 = fpga.get_multibank_ranges_from_subset(loc2[1], parent_sdfg)
+            loc3 = fpga.parse_location_bank(desc_res)
+            if loc3[0] != "DDR":
+                raise ValueError("Output array must be on DDR")
+            result_bank = int(loc3[1])
+            if(high1 - low1 != high2 - low2):
+                raise ValueError("The both input arrays need to span across the same number of banks")
+        else:
+            raise ValueError("The inputs for this implementation of dot must already be in HBM")
+        if n is None:
+            n = list(desc_x.shape)[1]
+
+        #modify the FpgaPartialSums implementation to use HBM
+        sdfg: SDFG = ExpandDotFpgaPartialSums.expansion(node, parent_state, parent_sdfg, n, partial_width)
+        state: SDFGState = sdfg.states()[0]
+
+        for node in state.sink_nodes():
+            if node.label == '_result':
+                state.remove_node(node)
+        
+        for node in state.sink_nodes():
+            if node.label == 'reduce':
+                utils.update_path_subsets(state, node, 
+                    subsets.Range.from_string("k"))
+        for node in state.source_nodes():
+            if node.label == 'reduce':
+                utils.update_path_subsets(state, node, 
+                    subsets.Range.from_string("k"))
+        sdfg.arrays.pop("_result")
+        utils.update_array_shape(sdfg, "reduce", [high1-low1])
+        sdfg.arrays["reduce"].transient = False
+
+        from dace.transformation.dataflow import hbm_transform
+        hbm_xform = hbm_transform.HbmTransform(sdfg.sdfg_id, -1, {}, -1)
+        for node in state.source_nodes():
+            if node.label != "partial_sums" and node.label != "reduce":
+                hbm_xform.update_hbm_access_list.append((state, node, "k"))
+        hbm_xform.outer_map_range = {param:f"0:{high1 - low1}"}
+        hbm_xform.update_array_list.append(("_x", f"hbm.{low1}:{high1}"))
+        hbm_xform.update_array_list.append(("_y", f"hbm.{low2}:{high2}"))
+        hbm_xform.apply(sdfg)
+        sdfg.sdfg_list[1].arrays["__reduce_in"].may_alias = True
+        sdfg.sdfg_list[1].arrays["__reduce_out"].may_alias = True
+
+        """
+        state: SDFGState = sdfg.states()[0]
+        reduce_read = list(state.sink_nodes())[0]
+        sdfg.add_array("_result", [2], desc_x.dtype, 
+            dtypes.StorageType.FPGA_Global)
+        sdfg.arrays["reduce"].transient = True
+        result_write = state.add_write("_result")
+        state.add_memlet_path(reduce_read, result_write,
+            memlet=mm.Memlet("reduce"))
+        """
+        state: SDFGState = sdfg.states()[0]
+        sdfg.arrays["reduce"].transient = True
+        sdfg.add_array("_result", [1], desc_x.dtype, 
+            dtypes.StorageType.FPGA_Global)
+        sdfg.arrays["_result"].location["bank"] = "DDR.0"
+        reduce_read = list(state.sink_nodes())[0]
+        reduce_write = state.add_access("reduce")
+        result_write = state.add_write("_result")
+        map_entry, map_exit = state.add_map("final_reduce", {"k":f"1:{high1-low1}"})
+        tasklet = state.add_tasklet("reduce", set(["_sum", "_in"]), set(["_out"]), 
+        "_out = _sum + _in")
+        state.add_memlet_path(reduce_read, map_entry, tasklet, 
+            memlet=mm.Memlet("reduce[0]"), dst_conn="_sum")
+        state.add_memlet_path(reduce_read, map_entry, tasklet, 
+            memlet=mm.Memlet("reduce[k]"), dst_conn="_in")
+        state.add_memlet_path(tasklet, map_exit, reduce_write,
+            memlet=mm.Memlet("reduce[0]"), src_conn="_out")
+        state.add_memlet_path(reduce_write, result_write, 
+            memlet=mm.Memlet("reduce[0]"))
+
+        return sdfg
+        
 
 @dace.library.expansion
 class ExpandDotFpgaAccumulate(ExpandTransformation):
@@ -557,6 +654,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "cuBLAS": ExpandDotCuBLAS,
         "FPGA_PartialSums": ExpandDotFpgaPartialSums,
         "FPGA_Accumulate": ExpandDotFpgaAccumulate,
+        "FPGA_HBM_PartialSums": ExpandDotFpgaHbmPartialSums,
     }
     default_implementation = None
 
@@ -589,8 +687,11 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         squeezed2 = copy.deepcopy(in_memlets[1].subset)
         sqdims1 = squeezed1.squeeze()
         sqdims2 = squeezed2.squeeze()
-
-        if len(squeezed1.size()) != 1 or len(squeezed2.size()) != 1:
+        
+        if self.implementation == "FPGA_HBM_PartialSums":
+            if len(squeezed1.size()) != 2 or len(squeezed2.size()) != 2:
+                raise ValueError("This implementation of dot product needs 2-dimensional arrays")
+        elif len(squeezed1.size()) != 1 or len(squeezed2.size()) != 1:
             raise ValueError(
                 "dot product only supported on 1-dimensional arrays")
         if out_memlet.subset.num_elements() != 1:
@@ -613,7 +714,6 @@ class Dot(dace.sdfg.nodes.LibraryNode):
             raise TypeError("Data types of input and output must be equal: "
                             f"{desc_x.dtype}, {desc_res.dtype}")
 
-        # We are guaranteed that there is only one non-squeezed dimension
         stride_x = desc_x.strides[sqdims1[0]]
         stride_y = desc_y.strides[sqdims2[0]]
         n = squeezed1.num_elements()
