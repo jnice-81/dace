@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
+import functools
+from dace.sdfg import utils
 import numpy as np
 
 import argparse
@@ -12,7 +14,7 @@ from dace.memlet import Memlet
 import dace.libraries.blas as blas
 
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory
+from dace.transformation.dataflow import StreamingMemory, hbm_transform, hbm_copy_transform
 
 
 def pure_graph(implementation, dtype, veclen):
@@ -27,8 +29,14 @@ def pure_graph(implementation, dtype, veclen):
 
     vtype = dace.vector(dtype, veclen)
 
-    sdfg.add_array("x", [n / veclen], vtype)
-    sdfg.add_array("y", [n / veclen], vtype)
+    if implementation == "FPGA_HBM_PartialSums":
+        bank_count = 8
+        input_lenght = n / (veclen * bank_count)
+    else:
+        input_lenght = n / veclen
+
+    sdfg.add_array("x", [input_lenght], vtype)
+    sdfg.add_array("y", [input_lenght], vtype)
     sdfg.add_array("r", [1], dtype)
 
     x = state.add_read("x")
@@ -51,13 +59,35 @@ def pure_graph(implementation, dtype, veclen):
                           result,
                           src_conn="_result",
                           memlet=Memlet(f"r[0]"))
-
+    
+    if implementation == "FPGA_HBM_PartialSums":
+        xform = hbm_transform.HbmTransform(sdfg.sdfg_id, -1, {}, -1)
+        xform.update_array_banks = [("x", "HBM", f"0:{bank_count}"),
+            ("y", "HBM", f"{bank_count}:{2*bank_count}"), 
+            ("r", "DDR", "0")]
+        xform.apply(sdfg)
+        for node in state.nodes():
+            if isinstance(node, dace.sdfg.nodes.AccessNode):
+                if node.label != "r":
+                    utils.update_path_subsets(state, node, f"0:{bank_count}, 0:{input_lenght}")
+        
     return sdfg
 
 
 def fpga_graph(implementation, dtype, veclen):
     sdfg = pure_graph(implementation, dtype, veclen)
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
+    if implementation == "FPGA_HBM_PartialSums":
+        utils.update_array_shape(sdfg, "x", [functools.reduce(lambda x, y: x*y, sdfg.arrays["x"].shape)])
+        utils.update_array_shape(sdfg, "y", [functools.reduce(lambda x, y: x*y, sdfg.arrays["y"].shape)])
+        for edge in sdfg.states()[1].edges():
+            if edge.src.data != "r":
+                hbm_copy_transform.HbmCopyTransform.apply_to(
+                    sdfg, 
+                    verify=False,
+                    _src_node=edge.src,
+                    _dst_node=edge.dst,
+                )
     sdfg.expand_library_nodes()
     sdfg.apply_transformations_repeated(
         [InlineSDFG, StreamingMemory], [{}, {
@@ -75,6 +105,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     size = args.N
 
+    args.target = "xilinx_hbm"
+
     if args.target == "pure":
         sdfg = pure_graph("pure", dace.float32, args.vector_length)
     elif args.target == "intel_fpga":
@@ -83,6 +115,9 @@ if __name__ == "__main__":
     elif args.target == "xilinx":
         dace.Config.set("compiler", "fpga_vendor", value="xilinx")
         sdfg = fpga_graph("FPGA_PartialSums", dace.float32, args.vector_length)
+    elif args.target == "xilinx_hbm":
+        dace.Config.set("compiler", "fpga_vendor", value="xilinx")
+        sdfg = fpga_graph("FPGA_HBM_PartialSums", dace.float32, args.vector_length)
     else:
         print(f"Unsupported target: {args.target}")
         exit(-1)

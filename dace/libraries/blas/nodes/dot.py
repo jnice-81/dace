@@ -378,17 +378,13 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
         (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(
             parent_sdfg, parent_state)
         #perform validation and collect infos
-        if 'bank' in desc_x.location and 'bank' in desc_y.location and 'bank' in desc_res.location:
+        if 'memorytype' in desc_x.location and 'memorytype' in desc_y.location and 'memorytype' in desc_res.location:
             loc1 = fpga.parse_location_bank(desc_x)
             loc2 = fpga.parse_location_bank(desc_y)
             if loc1[0] != "HBM" or loc2[0] != "HBM":
                 raise NotImplementedError("This implementation of dot only supports HBM inputs")
             low1, high1 = fpga.get_multibank_ranges_from_subset(loc1[1], parent_sdfg)
             low2, high2 = fpga.get_multibank_ranges_from_subset(loc2[1], parent_sdfg)
-            loc3 = fpga.parse_location_bank(desc_res)
-            if loc3[0] != "DDR":
-                raise ValueError("Output array must be on DDR")
-            result_bank = int(loc3[1])
             if(high1 - low1 != high2 - low2):
                 raise ValueError("The both input arrays need to span across the same number of banks")
         else:
@@ -416,33 +412,23 @@ class ExpandDotFpgaHbmPartialSums(ExpandTransformation):
         utils.update_array_shape(sdfg, "reduce", [high1-low1])
         sdfg.arrays["reduce"].transient = False
 
-        from dace.transformation.dataflow import hbm_transform
+        from dace.transformation.dataflow import hbm_transform # Avoid import loop
         hbm_xform = hbm_transform.HbmTransform(sdfg.sdfg_id, -1, {}, -1)
-        for node in state.source_nodes():
-            if node.label != "partial_sums" and node.label != "reduce":
-                hbm_xform.update_hbm_access_list.append((state, node, "k"))
-        hbm_xform.outer_map_range = {param:f"0:{high1 - low1}"}
-        hbm_xform.update_array_list.append(("_x", f"hbm.{low1}:{high1}"))
-        hbm_xform.update_array_list.append(("_y", f"hbm.{low2}:{high2}"))
+        
+        hbm_xform.outer_map_range = (param, f"0:{high1 - low1}")
+        hbm_xform.update_array_banks = [("_x", "HBM", f"{low1}:{high1}"), 
+            ("_y", "HBM", f"{low2}:{high2}")]
+        hbm_xform.update_array_access = ["_x", "_y"]
         hbm_xform.apply(sdfg)
+        sdfg.arrays["reduce"].storage = dtypes.StorageType.FPGA_Local # Overwritten by HbmTransform
         sdfg.sdfg_list[1].arrays["__reduce_in"].may_alias = True
         sdfg.sdfg_list[1].arrays["__reduce_out"].may_alias = True
 
-        """
-        state: SDFGState = sdfg.states()[0]
-        reduce_read = list(state.sink_nodes())[0]
-        sdfg.add_array("_result", [2], desc_x.dtype, 
-            dtypes.StorageType.FPGA_Global)
-        sdfg.arrays["reduce"].transient = True
-        result_write = state.add_write("_result")
-        state.add_memlet_path(reduce_read, result_write,
-            memlet=mm.Memlet("reduce"))
-        """
         state: SDFGState = sdfg.states()[0]
         sdfg.arrays["reduce"].transient = True
         sdfg.add_array("_result", [1], desc_x.dtype, 
             dtypes.StorageType.FPGA_Global)
-        sdfg.arrays["_result"].location["bank"] = "DDR.0"
+        sdfg.arrays["_result"].location = copy.deepcopy(desc_res.location)
         reduce_read = list(state.sink_nodes())[0]
         reduce_write = state.add_access("reduce")
         result_write = state.add_write("_result")
