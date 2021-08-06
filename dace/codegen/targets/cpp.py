@@ -11,7 +11,7 @@ import warnings
 
 import sympy as sp
 from six import StringIO
-from typing import IO, Optional, Tuple, Union, Iterable, List
+from typing import IO, Iterable, List, Optional, Tuple, Union
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
@@ -572,7 +572,7 @@ def cpp_offset_expr(d: data.Data,
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    if fpga.is_hbm_array(d):
+    if fpga.is_hbm_array_with_distributed_index(d):
         subset_in = fpga.modify_distributed_subset(subset_in, 0)
 
     # Offset according to parameters, then offset according to array
