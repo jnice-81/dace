@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace import memlet
+from dace.transformation.dataflow.strip_mining import StripMining
 from typing import List, Tuple, Union
 from dace.sdfg import SDFG, nodes
 import dace
@@ -25,26 +25,24 @@ def check_assignment(sdfg: SDFG, assignments: List[Union[Tuple[str, int],
         assert sdfg.arrays[array].location["bank"] == bank
 
 
-def _exec_hbmtransform(sdfg_source, assign, checkassign):
+def _exec_hbmtransform(sdfg_source, assign):
     sdfg = sdfg_source()
     set_assignment(sdfg, assign)
-    sdfg.apply_transformations(HbmTransform, validate=False)
-    check_assignment(sdfg, checkassign)
-    sdfg.validate()
-    assert not HbmTransform.can_be_applied(sdfg, {}, -1, sdfg, False)
+    sdfg.apply_transformations(HbmTransform, validate=False)    
+    sdfg.view()
+    exit()
+    sdfg.compile()
 
-
-def create_axpy_sdfg(array_shape=dace.symbol("n"), map_range=dace.symbol("n")):
+def create_vadd_sdfg(array_shape=dace.symbol("n"), map_range=dace.symbol("n")):
     @dace.program
-    def axpy(x: dace.float32[array_shape], y: dace.float32[array_shape]):
+    def vadd(x: dace.float32[array_shape], y: dace.float32[array_shape], z: dace.float32[array_shape]):
         for i in dace.map[0:map_range]:
             with dace.tasklet:
                 xin << x[i]
                 yin << y[i]
-                yout >> y[i]
-                yout = xin + yin
-
-    sdfg = axpy.to_sdfg()
+                zout >> z[i]
+                zout = xin + yin
+    sdfg = vadd.to_sdfg()
     sdfg.apply_strict_transformations()
     return sdfg
 
@@ -150,14 +148,8 @@ def create_deeply_nested_sdfg():
     sdfg.apply_fpga_transformations()
     return sdfg
 
-def test_axpy_direct():
-    _exec_hbmtransform(create_axpy_sdfg, [], [("x", "HBM", "0:16"),
-                                              ("y", "HBM", "16:32")])
-
-
 def test_assigned_axpy_unroll_3():
-    _exec_hbmtransform(create_axpy_sdfg, [("x", "HBM", "3:6")],
-                       [("x", "HBM", "3:6"), ("y", "HBM", "0:3")])
+    _exec_hbmtransform(create_vadd_sdfg, [("x", "HBM", "3:6"), ("y", "HBM", "0:3"), ("z", "HBM", "6:9")])
 
 
 def test_assigned_axpy_unroll_1():
@@ -225,16 +217,4 @@ def test_deeply_nested():
     sdfg.validate()
 
 if __name__ == "__main__":
-    test_axpy_direct()
     test_assigned_axpy_unroll_3()
-    test_assigned_axpy_unroll_1()
-    test_fixed_array_size_axpy_17()
-    test_fixed_map_range_axpy_17()
-    test_fixed_axpy_17()
-    test_fixed_axpy_21()
-    test_nd_split()
-    test_no_split()
-    test_multiple_range_map()
-    test_gemv_blas()
-    test_gemv_blas_nudging()
-    test_deeply_nested()
