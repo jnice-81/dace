@@ -174,7 +174,8 @@ class HbmTransform(transformation.Transformation):
             return False
 
         # Check if all arrays are assigned, and we can somehow split
-        if HbmTransform._scan_paths(sdfg, graph, map_entry, map_exit) is None:
+        result = HbmTransform._scan_paths(sdfg, graph, map_entry, map_exit)
+        if result is None:
             return False
 
         return True
@@ -185,48 +186,47 @@ class HbmTransform(transformation.Transformation):
             self._map_entry]]
         unroll_exit = state.exit_node(unroll_entry)
 
-        split_arrays, no_split_arrays, unroll_factor, split_dimensions, array_dimensions = HbmTransform._scan_paths(
+        split_arrays, no_split_arrays, unroll_factor, split_dimensions = HbmTransform._scan_paths(
             sdfg,
             state,
             unroll_entry,
             unroll_exit,
         )
 
-        if unroll_factor is not None:
-            tile_prefix = sdfg._find_new_name("bank")
-            new_map: nd.Map = StripMining.apply_to(
-                sdfg, {
-                    "tile_size": unroll_factor,
-                    "divides_evenly": True,
-                    "skew": True,
-                    "tiling_type": dtypes.TilingType.CeilRange,
-                    "new_dim_prefix": tile_prefix
-                },
-                _map_entry=unroll_entry)
-            for n in state.nodes():
-                if isinstance(n, nd.MapEntry) and n.map == new_map:
-                    #nodes are turned around by strip mine
-                    inner_entry = unroll_entry
-                    unroll_entry = n
-                    unroll_exit = state.exit_node(n)
-                    break
+        tile_prefix = sdfg._find_new_name("bank")
+        new_map: nd.Map = StripMining.apply_to(
+            sdfg, {
+                "tile_size": unroll_factor,
+                "divides_evenly": True,
+                "skew": True,
+                "tiling_type": dtypes.TilingType.CeilRange,
+                "new_dim_prefix": tile_prefix
+            },
+            _map_entry=unroll_entry)
+        for n in state.nodes():
+            if isinstance(n, nd.MapEntry) and n.map == new_map:
+                #nodes are turned around by strip mine
+                inner_entry = unroll_entry
+                unroll_entry = n
+                unroll_exit = state.exit_node(n)
+                break
 
-            # Switch the maps, update schedules, set outer parameter
-            tmp_to_inner_range = unroll_entry.map.range[0]
-            tmp_to_outer_range = inner_entry.map.range[0]
-            tmp_old_outer_param = unroll_entry.map.params[0]
-            scope_view = state.scope_subgraph(unroll_entry)
+        # Switch the maps, update schedules, set outer parameter
+        tmp_to_inner_range = unroll_entry.map.range[0]
+        tmp_to_outer_range = inner_entry.map.range[0]
+        tmp_old_outer_param = unroll_entry.map.params[0]
+        scope_view = state.scope_subgraph(unroll_entry)
 
-            unroll_entry.map.params[0] = self.new_dim
-            unroll_entry.map.range[0] = tmp_to_outer_range
-            inner_entry.map.range[0] = tmp_to_inner_range
-            inner_entry.map.schedule = dtypes.ScheduleType.Default
-            unroll_entry.map.schedule = dtypes.ScheduleType.Unrolled
+        unroll_entry.map.params[0] = self.new_dim
+        unroll_entry.map.range[0] = tmp_to_outer_range
+        inner_entry.map.range[0] = tmp_to_inner_range
+        inner_entry.map.schedule = dtypes.ScheduleType.Default
+        unroll_entry.map.schedule = dtypes.ScheduleType.Unrolled
 
-            # We remove the multiplication (since it's not needed any more) on the old parameter,
-            # but keep it so we can easier replace with the new dimension later
-            scope_view.replace(tmp_old_outer_param,
-                               f"({tmp_old_outer_param}/{unroll_factor})")
+        # We remove the multiplication (since it's not needed any more) on the old parameter,
+        # but keep it so we can easier replace with the new dimension later
+        scope_view.replace(tmp_old_outer_param,
+                           f"({tmp_old_outer_param}/{unroll_factor})")
 
         # Actually place the arrays and update paths
         for edge in state.in_edges(unroll_entry) + state.out_edges(unroll_exit):
@@ -238,14 +238,14 @@ class HbmTransform(transformation.Transformation):
                 bank = desc.location["bank"]
                 desc.location.pop("bank")
                 if name in split_arrays:
-                    division_info = [1] * array_dimensions[name]
+                    division_info = [1] * len(sdfg.arrays[name].shape)
                     division_info[split_dimensions[name]] = unroll_factor
                 else:
                     division_info = None
                 modify_bank_assignment(name, sdfg, memory_type, bank,
                                        division_info, self.move_to_FPGA_global)
 
-            if name in split_arrays:  # implies that unroll_factor not None
+            if name in split_arrays:
                 path = state.memlet_path(edge)
                 if isinstance(path[0].src,
                               nd.AccessNode) and path[0].src.data == name:
@@ -255,16 +255,12 @@ class HbmTransform(transformation.Transformation):
                     this_node = path[-1].dst
                     inner_edge = path[0]
 
-                #current_sbs = inner_edge.data.subset[split_dimensions[name]]
-                #new_value = symbolic.pystr_to_symbolic(f"{current_sbs[0]}-{tmp_old_outer_param}")
-                #inner_edge.data.subset[split_dimensions[name]] = (new_value, new_value, current_sbs[2])
                 inner_edge.data.replace({tmp_old_outer_param: "0"})
                 _update_memlet_hbm(state, inner_edge, self.new_dim, this_node)
 
         # Replace the dummy symbol everywhere where it still remains
-        if unroll_factor is not None:
-            scope_view.replace(tmp_old_outer_param,
-                               f"({tmp_to_inner_range[1]}+1)*{self.new_dim}")
+        scope_view.replace(tmp_old_outer_param,
+                           f"({tmp_to_inner_range[1]}+1)*{self.new_dim}")
 
         # Propagate the modified inner memlets
         propagation.propagate_memlets_state(sdfg, state)
@@ -273,20 +269,29 @@ class HbmTransform(transformation.Transformation):
     def _scan_paths(sdfg: SDFG, state: SDFGState, map_entry: nd.MapEntry,
                     map_exit: nd.MapExit):
         """
-        Find all arrays and record them if they are placed in global memory.
-        Find present bank assignemnts and constraints for allowed unroll factor for all arrays based on shape.
-        :return: A tuple of (arrays in global memory, arrays which may not be split based on their assignment,
-            an unroll factor which is set if an array is placed on multiple HBM-banks, 
-            a dict of arrays which are pre assigned to some location,
-            a list from arrays to the values a potential split has to divide, 
-            the dimensions of the array in global memory)
+        Find all arrays attached to the map, check their bank assignment/accesses
+        and find a suitable unroll factor if possible
+        :return: A tuple of (split_arrays, no_split_arrays, unroll_factor, split_dimensions,
+                array_dimensions), where split_arrays the array names that are split,
+                no_split_arrays array names that are not split,
+                unroll_factor the value for the number of splits that are created from
+                    split_arrrays,
+                split_dimensions a mapping from array name to the dimension along which
+                the array should be split (always only 1).
+
+        At the moment the function will return None (i.e. cannot apply) if the same array
+        in global memory is attached to the map with multiple edges. This also implies
+        that write-back to an array from which is read is disallowed. It is done this way
+        because it reduces the complexity of the function somewhat and because in
+        the context of HBM is likely a bad idea anyway. (More complex routing + reduced IO).
+        It will also not apply if an array is already an HBM-multibank array.
         """
 
         unroll_factor = None
         no_split_arrays = {}
         split_arrays = {}
-        array_dimensions = {}
         split_dimensions = {}
+        has_pending_changes = False  # Will there something be done?
 
         attached_array = {}
         for edge in state.in_edges(map_entry) + state.out_edges(map_exit):
@@ -320,9 +325,14 @@ class HbmTransform(transformation.Transformation):
                         if unroll_factor != high - low:  # All split arrays must have the same number of banks
                             return None
                     split_arrays[name] = assigned
+
+                    # Otherwise we assume the array was already placed
+                    if desc.shape[0] != high - low:
+                        has_pending_changes = True
+                    else:
+                        return None  # If an array was already placed on HBM we cannot apply
                 else:
                     no_split_arrays[name] = assigned
-            array_dimensions[name] = len(desc.shape)
 
         # Check if the arrays which should be split can do so
         for name in split_arrays:
@@ -351,5 +361,7 @@ class HbmTransform(transformation.Transformation):
             # We assume that it the found dimension behaves linear in the map symbol
             split_dimensions[name] = found
 
-        return (split_arrays, no_split_arrays, unroll_factor, split_dimensions,
-                array_dimensions)
+        if not has_pending_changes:  # In this case we would do nothing
+            return None
+
+        return (split_arrays, no_split_arrays, unroll_factor, split_dimensions)
