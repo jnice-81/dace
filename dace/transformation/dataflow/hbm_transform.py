@@ -127,6 +127,31 @@ def _update_memlet_hbm(state: SDFGState, inner_edge: graph.MultiConnectorEdge,
 @registry.autoregister_params(singlestate=True)
 @properties.make_properties
 class HbmTransform(transformation.Transformation):
+    """
+    A transformation that applies on a map when all attached global memories are
+    assigned to banks. Note that the assignment is rather a hinting, the actual
+    dimensionality changes (when) required will be done by the transformation.
+    All arrays that should span across multiple banks (i.e. should be split) must have
+    exactly one dimension where an access happens in dependence of the map variable i.
+    All attached arrays must either be assigned to one single bank or span across
+    the same number of banks. 
+
+    Moves all attached arrays to their banks, and changes their size according to the
+    bank assignment. Adds an outer unrolled loop around the map on which it is applied
+    and changes all accesses such that they go to the same place as before (for single
+    bank assignments), respectively to the right bank and the modified location for
+    multibank arrays. 
+
+    For any access in some dimension of an array dependent on the map variable i the transformation
+    assumes that the position behaves linear in i. Also in such dimension the array size has to be
+    divisable by the number of banks across which all multibank arrays span.
+
+    At the moment the transformation cannot apply if the same array
+    in global memory is attached to the map with multiple edges. This also implies
+    that write-back to an array from which data is read is disallowed. It is done this way
+    because it reduces the complexity of the transformation somewhat and because in
+    the context of HBM this is likely a bad idea anyway. (More complex routing + reduced IO).
+    """
 
     _map_entry = nd.MapEntry(nd.Map("", [], []))
 
@@ -278,13 +303,6 @@ class HbmTransform(transformation.Transformation):
                     split_arrrays,
                 split_dimensions a mapping from array name to the dimension along which
                 the array should be split (always only 1).
-
-        At the moment the function will return None (i.e. cannot apply) if the same array
-        in global memory is attached to the map with multiple edges. This also implies
-        that write-back to an array from which is read is disallowed. It is done this way
-        because it reduces the complexity of the function somewhat and because in
-        the context of HBM is likely a bad idea anyway. (More complex routing + reduced IO).
-        It will also not apply if an array is already an HBM-multibank array.
         """
 
         unroll_factor = None

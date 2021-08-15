@@ -18,6 +18,12 @@ def set_assignment(sdfg: SDFG, assignments: List[Tuple[str, str, str]]):
         desc.location["bank"] = bank
 
 
+def rand_float(input_shape):
+    a = np.random.rand(*input_shape)
+    a = a.astype(np.float32)
+    return a
+
+
 def _exec_hbmtransform(sdfg_source, assign, nest=False, num_apply=1):
     sdfg = sdfg_source()
     set_assignment(sdfg, assign)
@@ -123,12 +129,6 @@ def create_gemv_blas_sdfg(tile_size_y=None, tile_size_x=None, m=None):
     return sdfg
 
 
-def rand_float(input_shape):
-    a = np.random.rand(*input_shape)
-    a = a.astype(np.float32)
-    return a
-
-
 def validate_vadd_sdfg(csdfg, input_shape):
     a = rand_float(input_shape)
     b = rand_float(input_shape)
@@ -211,7 +211,6 @@ def test_multiple_applications():
                        num_apply=2)
 
 if __name__ == "__main__":
-    """
     test_axpy_unroll_3()
     test_axpy_unroll_1()
     test_axpy_unroll_mixed()
@@ -220,4 +219,3 @@ if __name__ == "__main__":
     test_gemv_blas_2()
     test_axpy_inconsistent_no_apply()
     test_multiple_applications()
-    """
