@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
+from dace.transformation.dataflow.streaming_memory import StreamingMemory
 import numpy as np
 from dace import dtypes
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
@@ -24,7 +25,8 @@ def rand_float(input_shape):
     return a
 
 
-def _exec_hbmtransform(sdfg_source, assign, nest=False, num_apply=1):
+def _exec_hbmtransform(sdfg_source, assign, nest=False, num_apply=1,
+    compile=True):
     sdfg = sdfg_source()
     set_assignment(sdfg, assign)
     assert sdfg.apply_transformations_repeated(HbmTransform, {
@@ -34,6 +36,7 @@ def _exec_hbmtransform(sdfg_source, assign, nest=False, num_apply=1):
                                                validate=False) == num_apply
     if num_apply == 0:
         return
+    #sdfg.view()
     if nest:
         for _, desc in sdfg.arrays.items():
             if desc.storage == dtypes.StorageType.Default:
@@ -42,10 +45,10 @@ def _exec_hbmtransform(sdfg_source, assign, nest=False, num_apply=1):
         for _, desc in sdfg.arrays.items():
             if desc.storage == dtypes.StorageType.FPGA_Global:
                 desc.storage = dtypes.StorageType.Default
-    sdfg.apply_fpga_transformations(validate=False)
+    sdfg.apply_fpga_transformations(validate=False) == 1
     sdfg.apply_transformations_repeated(InlineSDFG, validate=False)
-    sdfg.view()
-    csdfg = sdfg.compile()
+    if compile:
+        sdfg = sdfg.compile()
     return sdfg
 
 
@@ -152,10 +155,10 @@ def validate_gemv_sdfg(csdfg, matrix_shape, x_shape, y_shape):
     assert np.allclose(y, expect)
 
 
-def test_axpy_unroll_3():
-    csdfg = _exec_hbmtransform(create_vadd_sdfg, [("x", "HBM", "3:6"),
-                                                  ("y", "HBM", "0:3"),
-                                                  ("z", "HBM", "6:9")])
+def test_axpy_unroll_10():
+    csdfg = _exec_hbmtransform(create_vadd_sdfg, [("x", "HBM", "0:10"),
+                                                  ("y", "HBM", "10:20"),
+                                                  ("z", "HBM", "20:30")])
     validate_vadd_sdfg(csdfg, [3, 20])
 
 
@@ -210,8 +213,17 @@ def test_multiple_applications():
                                                   ("o2", "HBM", "8:10")],
                        num_apply=2)
 
+def test_streaming():
+    sdfg = _exec_hbmtransform(lambda: create_gemv_blas_sdfg(32),
+                               [("x", "HBM", "31:32"), ("y", "HBM", "30:31"),
+                                ("A", "HBM", "0:30")], True, 1, False)
+    sdfg.apply_transformations_repeated(StreamingMemory)
+    sdfg.view()
+
 if __name__ == "__main__":
-    test_axpy_unroll_3()
+    test_streaming()
+    exit() # View is active
+    test_axpy_unroll_10()
     test_axpy_unroll_1()
     test_axpy_unroll_mixed()
     test_nd_split()

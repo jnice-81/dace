@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 import copy
+from dace.codegen.targets import fpga
 from typing import Dict, List, Tuple
 import networkx as nx
 import warnings
@@ -259,12 +260,21 @@ class StreamingMemory(xf.Transformation):
 
         desc = sdfg.arrays[dnode.data]
 
+        # Check if this is a multibank array on HBM. In that case we need to respect the distributed subset
+        is_hbm_array_with_distributed_subset = fpga.is_hbm_array_with_distributed_index(sdfg.arrays[dnode.data])
+        if is_hbm_array_with_distributed_subset:
+            low, high = fpga.get_multibank_ranges_from_subset(fpga.parse_location_bank(sdfg.arrays[dnode.data])[1], sdfg)
+            stream_shape = (high - low, )
+        else :
+            stream_shape = (1, )
+
         # Create new streams of shape 1
         streams = {}
         mpaths = {}
         for edge in edges:
             name, newdesc = sdfg.add_stream(dnode.data,
                                             desc.dtype,
+                                            shape=stream_shape,
                                             buffer_size=self.buffer_size,
                                             storage=self.storage,
                                             transient=True,
@@ -275,8 +285,12 @@ class StreamingMemory(xf.Transformation):
 
             # Replace memlets in path with stream access
             for e in mpath:
+                if is_hbm_array_with_distributed_subset:
+                    stream_subset = subsets.Range([e.data.subset[0]])
+                else:
+                    stream_subset = '0'
                 e.data = mm.Memlet(data=name,
-                                   subset='0',
+                                   subset=stream_subset,
                                    other_subset=e.data.other_subset)
                 if isinstance(e.src, nodes.NestedSDFG):
                     e.data.dynamic = True
@@ -313,12 +327,16 @@ class StreamingMemory(xf.Transformation):
                 rmemlets = [(dnode, '__inp', innermost_edge.data)]
                 wmemlets = []
                 for i, (_, edge) in enumerate(component):
+                    if is_hbm_array_with_distributed_subset:
+                        stream_subset = subsets.Range([e.data.subset[0]])
+                    else:
+                        stream_subset = '0'
                     name = streams[edge]
                     ionode = state.add_write(name)
                     ionodes.append(ionode)
                     wmemlets.append(
                         (ionode, '__out%d' % i, mm.Memlet(data=name,
-                                                          subset='0')))
+                                                          subset=stream_subset)))
                 code = '\n'.join('__out%d = __inp' % i
                                  for i in range(len(component)))
             else:
@@ -333,12 +351,16 @@ class StreamingMemory(xf.Transformation):
                 wmemlets = [(dnode, '__out', innermost_edge.data)]
                 rmemlets = []
                 for i, (_, edge) in enumerate(component):
+                    if is_hbm_array_with_distributed_subset:
+                        stream_subset = subsets.Range([e.data.subset[0]])
+                    else:
+                        stream_subset = '0'
                     name = streams[edge]
                     ionode = state.add_read(name)
                     ionodes.append(ionode)
                     rmemlets.append(
                         (ionode, '__inp%d' % i, mm.Memlet(data=name,
-                                                          subset='0')))
+                                                          subset=stream_subset)))
                 code = '__out = __inp0'
 
             # Create map structure for read/write component
